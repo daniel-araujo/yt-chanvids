@@ -87,15 +87,11 @@ fn youtube_video_links(channel: &str) -> Vec<String> {
 
         if let Element(ref name, _, ref attrs) = node.node {
             if let Some(ref parent) = node.parent {
-                if let Some(parent) = parent.upgrade() {
-                    let ref parent = *parent;
-                    let parent = parent.borrow();
+                let parent = parent.upgrade().unwrap();
+                let parent = parent.borrow();
 
-                    if let Element(ref name, _, _) = parent.node {
-                        if !name.local.eq_str_ignore_ascii_case("h3") {
-                            return;
-                        }
-                    } else {
+                if let Element(ref name, _, _) = parent.node {
+                    if !name.local.eq_str_ignore_ascii_case("h3") {
                         return;
                     }
                 } else {
