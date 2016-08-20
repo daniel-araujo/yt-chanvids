@@ -1,0 +1,11 @@
+[package]
+name = "yt-chan-vid-links"
+version = "0.1.0"
+authors = ["Daniel Araujo <daniel@daniel-araujo.pt>"]
+
+[dependencies]
+
+hyper = "0.9.10"
+rustc-serialize = "0.3.19"
+html5ever = "0.5.4"
+regex = "0.1"
