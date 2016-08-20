@@ -31,7 +31,7 @@ fn youtube_video_links(channel: &str) -> Vec<String> {
     let data = do_start_request(channel);
     let data = data.as_object().unwrap();
 
-    let body = data.get("body")
+    let content = data.get("body")
         .unwrap()
         .as_object()
         .unwrap()
@@ -40,15 +40,14 @@ fn youtube_video_links(channel: &str) -> Vec<String> {
         .as_string()
         .unwrap();
 
-    let parser = parse_document(RcDom::default(), Default::default())
-        .one(body);
-    let document = parser.document;
+    let content_parser = parse_document(RcDom::default(), Default::default())
+        .one(content);
 
-    find_links(&mut links, &document);
+    find_video_links(&mut links, &content_parser.document);
 
-    if let Some(mut next_link) = find_next_link(&document) {
+    if let Some(mut next_page_link) = find_next_page_link(&content_parser.document) {
         loop {
-            let data = do_next_request(&next_link);
+            let data = do_next_page_request(&next_page_link);
             let data = data.as_object().unwrap();
 
             let content_html = data.get("content_html")
@@ -56,27 +55,21 @@ fn youtube_video_links(channel: &str) -> Vec<String> {
                 .as_string()
                 .unwrap();
 
+            let content_parser = parse_document(RcDom::default(), Default::default())
+                .one(content_html);
+
+            find_video_links(&mut links, &content_parser.document);
+
             let load_more_widget_html = data.get("load_more_widget_html")
                 .unwrap()
                 .as_string()
                 .unwrap();
 
-            let parser = parse_document(RcDom::default(), Default::default())
-                .one(content_html);
-
-            let document = parser.document;
-
-            find_links(&mut links, &document);
-
-            let parser = parse_document(RcDom::default(), Default::default())
+            let load_more_widget_parser = parse_document(RcDom::default(), Default::default())
                 .one(load_more_widget_html);
 
-            let document = parser.document;
-
-            match find_next_link(&document) {
-                Some(n) => {
-                    next_link = n;
-                },
+            match find_next_page_link(&load_more_widget_parser.document) {
+                Some(url) => next_page_link = url,
                 None => break,
             }
         }
@@ -84,12 +77,12 @@ fn youtube_video_links(channel: &str) -> Vec<String> {
 
     return links;
 
-    fn find_links(links: &mut Vec<String>, handle: &Handle) {
+    fn find_video_links(links: &mut Vec<String>, handle: &Handle) {
         let watch_link_regex = Regex::new(r"^/watch").unwrap();
         let node = handle.borrow();
 
         for child in node.children.iter() {
-            find_links(links, &child.clone());
+            find_video_links(links, &child.clone());
         }
 
         if let Element(ref name, _, ref attrs) = node.node {
@@ -125,17 +118,17 @@ fn youtube_video_links(channel: &str) -> Vec<String> {
                     continue;
                 }
 
-                links.push(prettify_link_url(&attr.value));
+                links.push(canonicalize_video_url(&attr.value));
             }
         }
     }
 
-    fn find_next_link(handle: &Handle) -> Option<String> {
+    fn find_next_page_link(handle: &Handle) -> Option<String> {
         let browse_link_regex = Regex::new(r"^/browse_ajax").unwrap();
         let node = handle.borrow();
 
         for child in node.children.iter() {
-            if let Some(link) = find_next_link(&child.clone()) {
+            if let Some(link) = find_next_page_link(&child.clone()) {
                 return Some(link);
             }
         }
@@ -150,7 +143,7 @@ fn youtube_video_links(channel: &str) -> Vec<String> {
                     continue;
                 }
 
-                return Some(prettify_link_url(&attr.value));
+                return Some(canonicalize_video_url(&attr.value));
             }
         }
 
@@ -184,7 +177,7 @@ fn do_start_request(channel: &str) -> Json {
     }
 }
 
-fn do_next_request(next_url: &str) -> Json {
+fn do_next_page_request(next_url: &str) -> Json {
     let client = Client::new();
 
     parse_json_response(client.get(next_url).send().unwrap())
@@ -198,10 +191,10 @@ fn parse_json_response(mut res: Response) -> Json {
     return Json::from_str(&body).unwrap();
 }
 
-fn prettify_link_url(l: &str) -> String {
-    if l.starts_with("/") {
-        return String::from("https://www.youtube.com") + l;
+fn canonicalize_video_url(url: &str) -> String {
+    if url.starts_with("/") {
+        return String::from("https://www.youtube.com") + url;
     }
 
-    return String::from(l);
+    return String::from(url);
 }
