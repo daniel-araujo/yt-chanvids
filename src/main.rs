@@ -6,6 +6,7 @@ extern crate regex;
 use rustc_serialize::json::Json;
 use std::io::Read;
 use hyper::Client;
+use hyper::status::StatusCode;
 use hyper::client::response::Response;
 use std::env;
 use html5ever::parse_document;
@@ -145,13 +146,29 @@ fn youtube_video_links(channel: &str) -> Vec<String> {
 }
 
 fn do_start_request(channel: &str) -> Json {
-    let start_url = String::from("https://www.youtube.com/user/")
+    let start_url = String::from("https://www.youtube.com/channel/")
         + channel
         + "/videos?live_view=500&flow=grid&view=0&sort=dd&spf=navigate";
 
     let client = Client::new();
 
-    parse_json_response(client.get(&start_url).send().unwrap())
+    let res = client.get(&start_url).send().unwrap();
+
+    if let StatusCode::Ok = res.status {
+        parse_json_response(res)
+    } else {
+        let start_url = String::from("https://www.youtube.com/user/")
+            + channel
+            + "/videos?live_view=500&flow=grid&view=0&sort=dd&spf=navigate";
+
+        let res = client.get(&start_url).send().unwrap();
+
+        if let StatusCode::Ok = res.status {
+            parse_json_response(res)
+        } else {
+            panic!("Channel does not seem to be reachable");
+        }
+    }
 }
 
 fn do_next_request(next_url: &str) -> Json {
