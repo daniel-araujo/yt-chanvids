@@ -205,6 +205,3 @@ fn prettify_link_url(l: &str) -> String {
 
     return String::from(l);
 }
-
-#[allow(dead_code)]
-fn unused_function() {}
