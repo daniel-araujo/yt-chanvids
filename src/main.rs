@@ -42,24 +42,44 @@ fn youtube_video_links(channel: &str) -> Vec<String> {
 
     let parser = parse_document(RcDom::default(), Default::default())
         .one(body);
-    let mut document = parser.document;
+    let document = parser.document;
 
     find_links(&mut links, &document);
 
-    while let Some(next_link) = find_next_link(&document) {
-        let data = do_next_request(&next_link);
-        let data = data.as_object().unwrap();
+    if let Some(mut next_link) = find_next_link(&document) {
+        loop {
+            let data = do_next_request(&next_link);
+            let data = data.as_object().unwrap();
 
-        let body = data.get("content_html")
-            .unwrap()
-            .as_string()
-            .unwrap();
+            let content_html = data.get("content_html")
+                .unwrap()
+                .as_string()
+                .unwrap();
 
-        let parser = parse_document(RcDom::default(), Default::default())
-            .one(body);
-        document = parser.document;
+            let load_more_widget_html = data.get("load_more_widget_html")
+                .unwrap()
+                .as_string()
+                .unwrap();
 
-        find_links(&mut links, &document);
+            let parser = parse_document(RcDom::default(), Default::default())
+                .one(content_html);
+
+            let document = parser.document;
+
+            find_links(&mut links, &document);
+
+            let parser = parse_document(RcDom::default(), Default::default())
+                .one(load_more_widget_html);
+
+            let document = parser.document;
+
+            match find_next_link(&document) {
+                Some(n) => {
+                    next_link = n;
+                },
+                None => break,
+            }
+        }
     }
 
     return links;
@@ -72,20 +92,15 @@ fn youtube_video_links(channel: &str) -> Vec<String> {
             find_links(links, &child.clone());
         }
 
-        match node.node {
-            Element(ref name, _, ref attrs) => {
-                if let Some(ref parent) = node.parent {
-                    if let Some(parent) = parent.upgrade() {
-                        let ref parent = *parent;
-                        let parent = parent.borrow();
+        if let Element(ref name, _, ref attrs) = node.node {
+            if let Some(ref parent) = node.parent {
+                if let Some(parent) = parent.upgrade() {
+                    let ref parent = *parent;
+                    let parent = parent.borrow();
 
-                        match parent.node {
-                            Element(ref name, _, _) => {
-                                if !name.local.eq_str_ignore_ascii_case("h3") {
-                                    return;
-                                }
-                            },
-                            _ => return,
+                    if let Element(ref name, _, _) = parent.node {
+                        if !name.local.eq_str_ignore_ascii_case("h3") {
+                            return;
                         }
                     } else {
                         return;
@@ -93,24 +108,25 @@ fn youtube_video_links(channel: &str) -> Vec<String> {
                 } else {
                     return;
                 }
+            } else {
+                return;
+            }
 
-                if !name.local.eq_str_ignore_ascii_case("a") {
-                    return;
+            if !name.local.eq_str_ignore_ascii_case("a") {
+                return;
+            }
+
+            for attr in attrs.iter() {
+                if !attr.name.local.eq_str_ignore_ascii_case("href") {
+                    continue;
                 }
 
-                for attr in attrs.iter() {
-                    if !attr.name.local.eq_str_ignore_ascii_case("href") {
-                        continue;
-                    }
-
-                    if !watch_link_regex.is_match(&attr.value) {
-                        continue;
-                    }
-
-                    links.push(prettify_link_url(&attr.value));
+                if !watch_link_regex.is_match(&attr.value) {
+                    continue;
                 }
-            },
-            _ => {},
+
+                links.push(prettify_link_url(&attr.value));
+            }
         }
     }
 
@@ -124,22 +140,19 @@ fn youtube_video_links(channel: &str) -> Vec<String> {
             }
         }
 
-        match node.node {
-            Element(_, _, ref attrs) => {
-                for attr in attrs.iter() {
-                    if !attr.name.local.eq_str_ignore_ascii_case("data-uix-load-more-href") {
-                        continue;
-                    }
-
-                    if !browse_link_regex.is_match(&attr.value) {
-                        continue;
-                    }
-
-                    return Some(prettify_link_url(&attr.value));
+        if let Element(_, _, ref attrs) = node.node {
+            for attr in attrs.iter() {
+                if !attr.name.local.eq_str_ignore_ascii_case("data-uix-load-more-href") {
+                    continue;
                 }
-            },
-            _ => {},
-        };
+
+                if !browse_link_regex.is_match(&attr.value) {
+                    continue;
+                }
+
+                return Some(prettify_link_url(&attr.value));
+            }
+        }
 
         return None;
     }
