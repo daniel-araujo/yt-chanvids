@@ -87,14 +87,14 @@ $ yt-chanvids Vsauce2 >> to-watch.txt
 ```
 
 ```
-# Counting the number of public videos of a channel.
+# Counts the number of public videos of a channel.
 $ yt-chanvids PewDiePie | wc -l
 2929
 ```
 
 ```
 # Shortens the links.
-yt-chanvids PewDiePie | sed "s/^https:\/\/www\.youtube\.com\/watch?v=/https:\/\/youtu.be\//"
+$ yt-chanvids PewDiePie | sed "s/^https:\/\/www\.youtube\.com\/watch?v=/https:\/\/youtu.be\//"
 https://youtu.be/0zYI8FjSF_k
 https://youtu.be/X4dAPKYPhDQ
 https://youtu.be/LZ0rGTsdfwk
