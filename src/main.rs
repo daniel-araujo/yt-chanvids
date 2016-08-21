@@ -30,15 +30,25 @@ fn main() {
         Err(f) => panic!(f.to_string()),
     };
 
+    let usage = format!("Usage: {} [OPTIONS] [--] CHANNEL-ID|USERNAME", program);
+
+    let print_help = || {
+        write!(&mut std::io::stdout(), "{}", opts.usage(&usage)).unwrap();
+    };
+
+    let print_usage_mistake = |mistake| {
+        write!(&mut std::io::stderr(), "{}\n\n", mistake).unwrap();
+        write!(&mut std::io::stderr(), "{}", opts.usage(&usage)).unwrap();
+    };
+
     if matches.opt_present("h") {
-        print_usage(&program, opts);
+        print_help();
         exit(0);
     }
 
     match matches.free.len() {
         0 => {
-            writeln!(&mut std::io::stderr(), "Missing channel argument.")
-                .unwrap();
+            print_usage_mistake("Channel id or username not provided.");
             exit(1);
         },
         1 => {
@@ -47,23 +57,17 @@ fn main() {
             exit(0);
         },
         _ => {
-            writeln!(&mut std::io::stderr(), "Unexpected number of arguments.")
-                .unwrap();
+            print_usage_mistake("Unexpected number of arguments.");
             exit(1);
         }
     }
-}
 
-fn print_usage(program: &str, opts: Options) {
-    let brief = format!("Usage: {} [OPTIONS] CHANNEL-ID|USERNAME", program);
-    print!("{}", opts.usage(&brief));
-}
+    fn print_links(channel: &str) {
+        let mut links = youtube_video_links(channel);
 
-fn print_links(channel: &str) {
-    let mut links = youtube_video_links(channel);
-
-    while let Some(link) = links.pop() {
-        println!("{}", link);
+        while let Some(link) = links.pop() {
+            println!("{}", link);
+        }
     }
 }
 
