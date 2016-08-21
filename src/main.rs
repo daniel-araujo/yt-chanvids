@@ -15,6 +15,8 @@ use html5ever::rcdom::{Element, RcDom, Handle};
 use html5ever::tendril::TendrilSink;
 use regex::Regex;
 use getopts::Options;
+use std::process::exit;
+use std::io::Write;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -30,14 +32,25 @@ fn main() {
 
     if matches.opt_present("h") {
         print_usage(&program, opts);
-        return;
+        exit(0);
     }
 
-    if matches.free.len() == 1 {
-        let channel = &matches.free[0];
-        print_links(channel);
-    } else {
-        print_usage(&program, opts);
+    match matches.free.len() {
+        0 => {
+            writeln!(&mut std::io::stderr(), "Missing channel argument.")
+                .unwrap();
+            exit(1);
+        },
+        1 => {
+            let channel = &matches.free[0];
+            print_links(channel);
+            exit(0);
+        },
+        _ => {
+            writeln!(&mut std::io::stderr(), "Unexpected number of arguments.")
+                .unwrap();
+            exit(1);
+        }
     }
 }
 
