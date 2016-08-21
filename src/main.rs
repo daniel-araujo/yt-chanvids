@@ -2,6 +2,7 @@ extern crate hyper;
 extern crate rustc_serialize;
 extern crate html5ever;
 extern crate regex;
+extern crate getopts;
 
 use rustc_serialize::json::Json;
 use std::io::Read;
@@ -13,11 +14,39 @@ use html5ever::parse_document;
 use html5ever::rcdom::{Element, RcDom, Handle};
 use html5ever::tendril::TendrilSink;
 use regex::Regex;
+use getopts::Options;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
-    let ref channel: String = args[1];
+    let program = &args[0];
 
+    let mut opts = Options::new();
+    opts.optflag("h", "help", "Print this help menu.");
+
+    let matches = match opts.parse(&args[1..]) {
+        Ok(m) => m,
+        Err(f) => panic!(f.to_string()),
+    };
+
+    if matches.opt_present("h") {
+        print_usage(&program, opts);
+        return;
+    }
+
+    if matches.free.len() == 1 {
+        let channel = &matches.free[0];
+        print_links(channel);
+    } else {
+        print_usage(&program, opts);
+    }
+}
+
+fn print_usage(program: &str, opts: Options) {
+    let brief = format!("Usage: {} [OPTIONS] CHANNEL-ID|USERNAME", program);
+    print!("{}", opts.usage(&brief));
+}
+
+fn print_links(channel: &str) {
     let mut links = youtube_video_links(channel);
 
     while let Some(link) = links.pop() {
