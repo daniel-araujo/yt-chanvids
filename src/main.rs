@@ -63,27 +63,43 @@ fn main() {
     }
 
     fn print_links(channel: &str) {
-        let mut links = youtube_video_links(channel);
+        match youtube_video_links(channel) {
+            Ok(mut links) => {
+                while let Some(link) = links.pop() {
+                    println!("{}", link);
+                }
+            },
+            Err(err) => {
+                let FetchLinksError::RequestError(err) = err;
 
-        while let Some(link) = links.pop() {
-            println!("{}", link);
+                match err {
+                    RequestError::NotFound => {
+                        print_error("Channel does not seem to be reachable.");
+                        exit(1);
+                    },
+                    _ => panic!(err),
+                }
+            },
         }
     }
+
+    fn print_error(message: &str) {
+        write!(&mut std::io::stderr(), "{}\n", message).unwrap();
+    };
 }
 
-fn youtube_video_links(channel: &str) -> Vec<String> {
+fn youtube_video_links(channel: &str) -> Result<Vec<String>, FetchLinksError> {
     let mut links: Vec<String> = Vec::new();
 
-    let data = do_start_request(channel);
-    let data = data.as_object().unwrap();
+    let data = try!(do_start_request(channel)
+        .map_err(FetchLinksError::RequestError));
+    let data = data.as_object()
+        .unwrap();
 
     let content = data.get("body")
-        .unwrap()
-        .as_object()
-        .unwrap()
-        .get("content")
-        .unwrap()
-        .as_string()
+        .and_then(|i| i.as_object())
+        .and_then(|i| i.get("content"))
+        .and_then(|i| i.as_string())
         .unwrap();
 
     let content_parser = parse_document(RcDom::default(), Default::default())
@@ -93,12 +109,13 @@ fn youtube_video_links(channel: &str) -> Vec<String> {
 
     if let Some(mut next_page_link) = find_next_page_link(&content_parser.document) {
         loop {
-            let data = do_next_page_request(&next_page_link);
-            let data = data.as_object().unwrap();
+            let data = try!(do_next_page_request(&next_page_link)
+                .map_err(FetchLinksError::RequestError));
+            let data = data.as_object()
+                .unwrap();
 
             let content_html = data.get("content_html")
-                .unwrap()
-                .as_string()
+                .and_then(|i| i.as_string())
                 .unwrap();
 
             let content_parser = parse_document(RcDom::default(), Default::default())
@@ -107,8 +124,7 @@ fn youtube_video_links(channel: &str) -> Vec<String> {
             find_video_links(&mut links, &content_parser.document);
 
             let load_more_widget_html = data.get("load_more_widget_html")
-                .unwrap()
-                .as_string()
+                .and_then(|i| i.as_string())
                 .unwrap();
 
             let load_more_widget_parser = parse_document(RcDom::default(), Default::default())
@@ -121,7 +137,7 @@ fn youtube_video_links(channel: &str) -> Vec<String> {
         }
     }
 
-    return links;
+    return Ok(links);
 
     fn find_video_links(links: &mut Vec<String>, handle: &Handle) {
         let watch_link_regex = Regex::new(r"^/watch").unwrap();
@@ -193,44 +209,66 @@ fn youtube_video_links(channel: &str) -> Vec<String> {
     }
 }
 
-fn do_start_request(channel: &str) -> Json {
+fn do_start_request(id: &str) -> Result<Json, RequestError> {
+    do_start_request_channel(id)
+        .or_else(|_| do_start_request_username(id))
+}
+
+fn do_start_request_channel(channel: &str) -> Result<Json, RequestError> {
     let start_url = String::from("https://www.youtube.com/channel/")
         + channel
         + "/videos?live_view=500&flow=grid&view=0&sort=dd&spf=navigate";
 
     let client = Client::new();
 
-    let res = client.get(&start_url).send().unwrap();
+    let res = try!(client.get(&start_url)
+        .send()
+        .map_err(RequestError::HyperError));
 
     if let StatusCode::Ok = res.status {
-        parse_json_response(res)
+        return parse_json_response(res)
+            .map_err(RequestError::ParseJsonError)
     } else {
-        let start_url = String::from("https://www.youtube.com/user/")
-            + channel
-            + "/videos?live_view=500&flow=grid&view=0&sort=dd&spf=navigate";
-
-        let res = client.get(&start_url).send().unwrap();
-
-        if let StatusCode::Ok = res.status {
-            parse_json_response(res)
-        } else {
-            panic!("Channel does not seem to be reachable");
-        }
+        return Err(RequestError::NotFound);
     }
 }
 
-fn do_next_page_request(next_url: &str) -> Json {
+fn do_start_request_username(username: &str) -> Result<Json, RequestError> {
+    let start_url = String::from("https://www.youtube.com/user/")
+        + username
+        + "/videos?live_view=500&flow=grid&view=0&sort=dd&spf=navigate";
+
     let client = Client::new();
 
-    parse_json_response(client.get(next_url).send().unwrap())
+    let res = try!(client.get(&start_url)
+        .send()
+        .map_err(RequestError::HyperError));
+
+    if let StatusCode::Ok = res.status {
+        parse_json_response(res)
+            .map_err(RequestError::ParseJsonError)
+    } else {
+        return Err(RequestError::NotFound);
+    }
 }
 
-fn parse_json_response(mut res: Response) -> Json {
+fn do_next_page_request(next_url: &str) -> Result<Json, RequestError> {
+    let client = Client::new();
+
+    let res = try!(client.get(next_url)
+        .send()
+        .map_err(RequestError::HyperError));
+
+    parse_json_response(res)
+        .map_err(RequestError::ParseJsonError)
+}
+
+fn parse_json_response(mut res: Response) -> Result<Json, ParseJsonError> {
     let mut body = String::new();
 
-    res.read_to_string(&mut body).unwrap();
-
-    return Json::from_str(&body).unwrap();
+    try!(res.read_to_string(&mut body).map_err(ParseJsonError::Io));
+    
+    return Json::from_str(&body).map_err(ParseJsonError::Parse)
 }
 
 fn canonicalize_video_url(url: &str) -> String {
@@ -239,4 +277,22 @@ fn canonicalize_video_url(url: &str) -> String {
     }
 
     return String::from(url);
+}
+
+#[derive(Debug)]
+enum FetchLinksError {
+    RequestError(RequestError),
+}
+
+#[derive(Debug)]
+enum RequestError {
+    HyperError(hyper::Error),
+    ParseJsonError(ParseJsonError),
+    NotFound,
+}
+
+#[derive(Debug)]
+enum ParseJsonError {
+    Io(std::io::Error),
+    Parse(rustc_serialize::json::ParserError),
 }
