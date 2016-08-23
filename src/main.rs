@@ -91,8 +91,7 @@ fn main() {
 fn youtube_video_links(channel: &str) -> Result<Vec<String>, FetchLinksError> {
     let mut links: Vec<String> = Vec::new();
 
-    let data = try!(do_start_request(channel)
-        .map_err(FetchLinksError::RequestError));
+    let data = try!(do_start_request(channel));
     let data = data.as_object()
         .unwrap();
 
@@ -109,8 +108,7 @@ fn youtube_video_links(channel: &str) -> Result<Vec<String>, FetchLinksError> {
 
     if let Some(mut next_page_link) = find_next_page_link(&content_parser.document) {
         loop {
-            let data = try!(do_next_page_request(&next_page_link)
-                .map_err(FetchLinksError::RequestError));
+            let data = try!(do_next_page_request(&next_page_link));
             let data = data.as_object()
                 .unwrap();
 
@@ -221,13 +219,10 @@ fn do_start_request_channel(channel: &str) -> Result<Json, RequestError> {
 
     let client = Client::new();
 
-    let res = try!(client.get(&start_url)
-        .send()
-        .map_err(RequestError::HyperError));
+    let res = try!(client.get(&start_url).send());
 
     if let StatusCode::Ok = res.status {
-        return parse_json_response(res)
-            .map_err(RequestError::ParseJsonError)
+        return Ok(try!(parse_json_response(res)))
     } else {
         return Err(RequestError::NotFound);
     }
@@ -240,13 +235,10 @@ fn do_start_request_username(username: &str) -> Result<Json, RequestError> {
 
     let client = Client::new();
 
-    let res = try!(client.get(&start_url)
-        .send()
-        .map_err(RequestError::HyperError));
+    let res = try!(client.get(&start_url).send());
 
     if let StatusCode::Ok = res.status {
-        parse_json_response(res)
-            .map_err(RequestError::ParseJsonError)
+        return Ok(try!(parse_json_response(res)))
     } else {
         return Err(RequestError::NotFound);
     }
@@ -255,20 +247,17 @@ fn do_start_request_username(username: &str) -> Result<Json, RequestError> {
 fn do_next_page_request(next_url: &str) -> Result<Json, RequestError> {
     let client = Client::new();
 
-    let res = try!(client.get(next_url)
-        .send()
-        .map_err(RequestError::HyperError));
+    let res = try!(client.get(next_url).send());
 
-    parse_json_response(res)
-        .map_err(RequestError::ParseJsonError)
+    Ok(try!(parse_json_response(res)))
 }
 
 fn parse_json_response(mut res: Response) -> Result<Json, ParseJsonError> {
     let mut body = String::new();
 
-    try!(res.read_to_string(&mut body).map_err(ParseJsonError::Io));
+    try!(res.read_to_string(&mut body));
     
-    return Json::from_str(&body).map_err(ParseJsonError::Parse)
+    Ok(try!(Json::from_str(&body)))
 }
 
 fn canonicalize_video_url(url: &str) -> String {
@@ -284,6 +273,12 @@ enum FetchLinksError {
     RequestError(RequestError),
 }
 
+impl From<RequestError> for FetchLinksError {
+    fn from(err: RequestError) -> FetchLinksError {
+        FetchLinksError::RequestError(err)
+    }
+}
+
 #[derive(Debug)]
 enum RequestError {
     HyperError(hyper::Error),
@@ -291,8 +286,32 @@ enum RequestError {
     NotFound,
 }
 
+impl From<hyper::Error> for RequestError {
+    fn from(err: hyper::Error) -> RequestError {
+        RequestError::HyperError(err)
+    }
+}
+
+impl From<ParseJsonError> for RequestError {
+    fn from(err: ParseJsonError) -> RequestError {
+        RequestError::ParseJsonError(err)
+    }
+}
+
 #[derive(Debug)]
 enum ParseJsonError {
     Io(std::io::Error),
     Parse(rustc_serialize::json::ParserError),
+}
+
+impl From<std::io::Error> for ParseJsonError {
+    fn from(err: std::io::Error) -> ParseJsonError {
+        ParseJsonError::Io(err)
+    }
+}
+
+impl From<rustc_serialize::json::ParserError> for ParseJsonError {
+    fn from(err: rustc_serialize::json::ParserError) -> ParseJsonError {
+        ParseJsonError::Parse(err)
+    }
 }
