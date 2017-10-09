@@ -1,22 +1,23 @@
-extern crate hyper;
-extern crate rustc_serialize;
-extern crate html5ever;
-extern crate regex;
 extern crate getopts;
+extern crate hyper;
+extern crate hyper_tls;
+extern crate tokio_core;
+extern crate futures;
+extern crate serde;
+extern crate serde_json;
+extern crate serde_qs;
+#[macro_use]
+extern crate serde_derive;
 
-use rustc_serialize::json::Json;
-use std::io::Read;
-use hyper::Client;
-use hyper::status::StatusCode;
-use hyper::client::response::Response;
 use std::env;
-use html5ever::parse_document;
-use html5ever::rcdom::{Element, RcDom, Handle};
-use html5ever::tendril::TendrilSink;
-use regex::Regex;
-use getopts::Options;
 use std::process::exit;
 use std::io::Write;
+use std::str::FromStr;
+
+use getopts::Options;
+
+use futures::Future;
+use futures::Stream;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -69,16 +70,25 @@ fn main() {
                     println!("{}", link);
                 }
             },
-            Err(err) => {
-                let FetchLinksError::RequestError(err) = err;
-
-                match err {
+            Err(err) => match err {
+                FetchLinksError::RequestError(err) => match err {
                     RequestError::NotFound => {
                         print_error("Channel does not seem to be reachable.");
                         exit(1);
                     },
-                    _ => panic!(err),
-                }
+                    RequestError::ParseJsonDataError(ParseJsonDataError::Html(html)) => {
+                        let message = "A JSON request returned html:\n".to_string() + &html;
+                        print_error(&message);
+                        exit(1);
+                    },
+                    _ => {
+                        panic!(format!("{:?}", err))
+                    },
+                },
+                FetchLinksError::MissingUploadsPage => {
+                    print_error("This channel does not have an Uploads page.");
+                    exit(1);
+                },
             },
         }
     }
@@ -91,186 +101,187 @@ fn main() {
 fn youtube_video_links(channel: &str) -> Result<Vec<String>, FetchLinksError> {
     let mut links: Vec<String> = Vec::new();
 
-    let data = try!(do_start_request(channel));
-    let data = data.as_object()
-        .unwrap();
+    // HTTP client setup.
+    let mut core = tokio_core::reactor::Core::new().unwrap();
+    let http_client = hyper::Client::configure()
+        .connector(hyper_tls::HttpsConnector::new(4, &core.handle()).unwrap())
+        .build(&core.handle());
 
-    let content = data.get("body")
-        .and_then(|i| i.as_object())
-        .and_then(|i| i.get("content"))
-        .and_then(|i| i.as_string())
-        .unwrap();
+    {
+        let mut items;
+        let mut next_continuation;
 
-    let content_parser = parse_document(RcDom::default(), Default::default())
-        .one(content);
-
-    find_video_links(&mut links, &content_parser.document);
-
-    if let Some(mut next_page_link) = find_next_page_link(&content_parser.document) {
-        loop {
-            let data = try!(do_next_page_request(&next_page_link));
-            let data = data.as_object()
-                .unwrap();
-
-            let content_html = data.get("content_html")
-                .and_then(|i| i.as_string())
-                .unwrap();
-
-            let content_parser = parse_document(RcDom::default(), Default::default())
-                .one(content_html);
-
-            find_video_links(&mut links, &content_parser.document);
-
-            let load_more_widget_html = data.get("load_more_widget_html")
-                .and_then(|i| i.as_string())
-                .unwrap();
-
-            let load_more_widget_parser = parse_document(RcDom::default(), Default::default())
-                .one(load_more_widget_html);
-
-            match find_next_page_link(&load_more_widget_parser.document) {
-                Some(url) => next_page_link = url,
-                None => break,
+        let mut collect_links = |items: &serde_json::Value| {
+            for item in items.as_array().unwrap().iter() {
+                let video_id = item["gridVideoRenderer"]["videoId"].as_str().unwrap();
+                links.push(make_youtube_video_url(video_id));
             }
+        };
+
+        let data = uploads_page_data(&mut core, &http_client, channel)?;
+
+        let section_list_renderer = &data[1]["response"]["contents"]["twoColumnBrowseResultsRenderer"]["tabs"][1]["tabRenderer"]["content"]["sectionListRenderer"];
+        let item_section_renderer = &section_list_renderer["contents"][0]["itemSectionRenderer"];
+        let grid_renderer = &item_section_renderer["contents"][0]["gridRenderer"];
+
+        items = grid_renderer["items"].clone();
+        next_continuation = grid_renderer["continuations"][0]["nextContinuationData"].clone();
+
+        if !items.is_array() {
+            return Err(FetchLinksError::MissingUploadsPage);
         }
-    }
 
-    return Ok(links);
+        {
+            let mut cycle = |items: &serde_json::Value, next_continuation: &serde_json::Value|
+                    -> Result<(serde_json::Value, serde_json::Value), RequestError> {
+                let request = request_browse(
+                    next_continuation["continuation"].as_str().unwrap(),
+                    next_continuation["clickTrackingParams"].as_str().unwrap());
 
-    fn find_video_links(links: &mut Vec<String>, handle: &Handle) {
-        let watch_link_regex = Regex::new(r"^/watch").unwrap();
-        let node = handle.borrow();
+                let work = http_client.request(request);
 
-        for child in node.children.iter() {
-            find_video_links(links, &child.clone());
-        }
+                collect_links(items);
 
-        if let Element(ref name, _, ref attrs) = node.node {
-            if let Some(ref parent) = node.parent {
-                let parent = parent.upgrade().unwrap();
-                let parent = parent.borrow();
+                let response = core.run(work).unwrap();
 
-                if let Element(ref name, _, _) = parent.node {
-                    if !name.local.eq_str_ignore_ascii_case("h3") {
-                        return;
-                    }
+                if let hyper::StatusCode::Ok = response.status() {
+                    let data = parse_json_data(&hyper_response_body_as_string(&mut core, response)?)?;
+                    let continuation_contents = &data[1]["response"]["continuationContents"];
+                    let grid_continuation = &continuation_contents["gridContinuation"];
+
+                    let items = grid_continuation["items"].clone();
+                    let next_continuation = grid_continuation["continuations"][0]["nextContinuationData"].clone();
+
+                    Ok((items, next_continuation))
                 } else {
-                    return;
+                    Ok((items.clone(), serde_json::Value::default()))
                 }
-            } else {
-                return;
-            }
+            };
 
-            if !name.local.eq_str_ignore_ascii_case("a") {
-                return;
-            }
+            while next_continuation.is_object() {
+                let result = cycle(&items, &next_continuation)?;
 
-            for attr in attrs.iter() {
-                if !attr.name.local.eq_str_ignore_ascii_case("href") {
-                    continue;
-                }
-
-                if !watch_link_regex.is_match(&attr.value) {
-                    continue;
-                }
-
-                links.push(canonicalize_video_url(&attr.value));
-            }
-        }
-    }
-
-    fn find_next_page_link(handle: &Handle) -> Option<String> {
-        let browse_link_regex = Regex::new(r"^/browse_ajax").unwrap();
-        let node = handle.borrow();
-
-        for child in node.children.iter() {
-            if let Some(link) = find_next_page_link(&child.clone()) {
-                return Some(link);
+                items = result.0;
+                next_continuation = result.1;
             }
         }
 
-        if let Element(_, _, ref attrs) = node.node {
-            for attr in attrs.iter() {
-                if !attr.name.local.eq_str_ignore_ascii_case("data-uix-load-more-href") {
-                    continue;
-                }
+        collect_links(&items);
+    }
 
-                if !browse_link_regex.is_match(&attr.value) {
-                    continue;
-                }
+    Ok(links)
+}
 
-                return Some(canonicalize_video_url(&attr.value));
-            }
+fn uploads_page_data(
+        core: &mut tokio_core::reactor::Core,
+        http_client: &hyper::Client<hyper_tls::HttpsConnector<hyper::client::HttpConnector>>,
+        id: &str) -> Result<serde_json::Value, RequestError> {
+    let candidates = [request_channel_uploads, request_user_uploads];
+
+    for worker in candidates.iter() {
+        let request = worker(id);
+
+        let response = core.run(http_client.request(request)).unwrap();
+
+        if let hyper::StatusCode::Ok = response.status() {
+            let data = hyper_response_body_as_string(core, response)?;
+
+            return Ok(parse_json_data(&data)?)
         }
-
-        return None;
     }
+
+    Err(RequestError::NotFound)
 }
 
-fn do_start_request(id: &str) -> Result<Json, RequestError> {
-    do_start_request_channel(id)
-        .or_else(|_| do_start_request_username(id))
+fn request_channel_uploads(channel: &str) -> hyper::Request {
+    let url = hyper::Uri::from_str(
+        &(String::from("https://www.youtube.com/channel/")
+            + channel
+            + "/videos?view=0&flow=grid&pbj=1"))
+        .unwrap();
+
+    let mut request = hyper::Request::new(hyper::Method::Get, url);
+    request.headers_mut().set_raw("x-youtube-client-name", "1");
+    request.headers_mut().set_raw("x-youtube-client-version", "2.20170927");
+
+    request
 }
 
-fn do_start_request_channel(channel: &str) -> Result<Json, RequestError> {
-    let start_url = String::from("https://www.youtube.com/channel/")
-        + channel
-        + "/videos?live_view=500&flow=grid&view=0&sort=dd&spf=navigate";
+fn request_user_uploads(user: &str) -> hyper::Request {
+    let url = hyper::Uri::from_str(
+        &(String::from("https://www.youtube.com/user/")
+            + user
+            + "/videos?view=0&flow=grid&pbj=1"))
+        .unwrap();
 
-    let client = Client::new();
+    let mut request = hyper::Request::new(hyper::Method::Get, url);
+    request.headers_mut().set_raw("x-youtube-client-name", "1");
+    request.headers_mut().set_raw("x-youtube-client-version", "2.20170927");
 
-    let res = try!(client.get(&start_url).send());
+    request
+}
 
-    if let StatusCode::Ok = res.status {
-        return Ok(try!(parse_json_response(res)))
-    } else {
-        return Err(RequestError::NotFound);
+fn request_browse(ctoken: &str, itct: &str) -> hyper::Request {
+    #[derive(Deserialize, Serialize)]
+    struct Query {
+        ctoken: String,
+        itct: String,
     }
+
+    let query = Query {
+        ctoken: ctoken.to_owned(),
+        itct: itct.to_owned(),
+    };
+    let url = hyper::Uri::from_str(
+        &(String::from("https://www.youtube.com/browse_ajax?")
+            + &serde_qs::to_string(&query).unwrap()))
+        .unwrap();
+
+    let mut request = hyper::Request::new(hyper::Method::Get, url);
+    request.headers_mut().set_raw("x-youtube-client-name", "1");
+    request.headers_mut().set_raw("x-youtube-client-version", "2.20170927");
+
+    request
 }
 
-fn do_start_request_username(username: &str) -> Result<Json, RequestError> {
-    let start_url = String::from("https://www.youtube.com/user/")
-        + username
-        + "/videos?live_view=500&flow=grid&view=0&sort=dd&spf=navigate";
+fn hyper_response_body_as_string(
+        core: &mut tokio_core::reactor::Core,
+        response: hyper::Response) -> Result<String, hyper::Error> {
+    let work = response.body().concat2()
+        .and_then(|chunk| {
+            Ok(String::from_utf8(chunk.to_vec()).unwrap())
+        });
 
-    let client = Client::new();
+    core.run(work)
+}
 
-    let res = try!(client.get(&start_url).send());
+fn parse_json_data(string: &str) -> Result<serde_json::Value, ParseJsonDataError> {
+    let s = String::from(string.trim_left());
 
-    if let StatusCode::Ok = res.status {
-        return Ok(try!(parse_json_response(res)))
-    } else {
-        return Err(RequestError::NotFound);
+    if s.starts_with("<!") {
+        return Err(ParseJsonDataError::Html(s));
     }
+
+    serde_json::from_str(string).map_err(|err| ParseJsonDataError::from(err))
 }
 
-fn do_next_page_request(next_url: &str) -> Result<Json, RequestError> {
-    let client = Client::new();
-
-    let res = try!(client.get(next_url).send());
-
-    Ok(try!(parse_json_response(res)))
+fn make_youtube_video_url(id: &str) -> String {
+    String::from("https://www.youtube.com/watch?v=") + id
 }
 
-fn parse_json_response(mut res: Response) -> Result<Json, ParseJsonError> {
-    let mut body = String::new();
-
-    try!(res.read_to_string(&mut body));
-    
-    Ok(try!(Json::from_str(&body)))
-}
-
+#[allow(dead_code)]
 fn canonicalize_video_url(url: &str) -> String {
     if url.starts_with("/") {
         return String::from("https://www.youtube.com") + url;
     }
 
-    return String::from(url);
+    String::from(url)
 }
 
 #[derive(Debug)]
 enum FetchLinksError {
     RequestError(RequestError),
+    MissingUploadsPage,
 }
 
 impl From<RequestError> for FetchLinksError {
@@ -282,7 +293,9 @@ impl From<RequestError> for FetchLinksError {
 #[derive(Debug)]
 enum RequestError {
     HyperError(hyper::Error),
-    ParseJsonError(ParseJsonError),
+    HyperUriError(hyper::error::UriError),
+    Io(std::io::Error),
+    ParseJsonDataError(ParseJsonDataError),
     NotFound,
 }
 
@@ -292,26 +305,39 @@ impl From<hyper::Error> for RequestError {
     }
 }
 
-impl From<ParseJsonError> for RequestError {
-    fn from(err: ParseJsonError) -> RequestError {
-        RequestError::ParseJsonError(err)
+impl From<ParseJsonDataError> for RequestError {
+    fn from(err: ParseJsonDataError) -> RequestError {
+        RequestError::ParseJsonDataError(err)
+    }
+}
+
+impl From<std::io::Error> for RequestError {
+    fn from(err: std::io::Error) -> RequestError {
+        RequestError::Io(err)
+    }
+}
+
+impl From<hyper::error::UriError> for RequestError {
+    fn from(err: hyper::error::UriError) -> RequestError {
+        RequestError::HyperUriError(err)
     }
 }
 
 #[derive(Debug)]
-enum ParseJsonError {
+enum ParseJsonDataError {
     Io(std::io::Error),
-    Parse(rustc_serialize::json::ParserError),
+    Parse(serde_json::Error),
+    Html(String),
 }
 
-impl From<std::io::Error> for ParseJsonError {
-    fn from(err: std::io::Error) -> ParseJsonError {
-        ParseJsonError::Io(err)
+impl From<std::io::Error> for ParseJsonDataError {
+    fn from(err: std::io::Error) -> ParseJsonDataError {
+        ParseJsonDataError::Io(err)
     }
 }
 
-impl From<rustc_serialize::json::ParserError> for ParseJsonError {
-    fn from(err: rustc_serialize::json::ParserError) -> ParseJsonError {
-        ParseJsonError::Parse(err)
+impl From<serde_json::Error> for ParseJsonDataError {
+    fn from(err: serde_json::Error) -> ParseJsonDataError {
+        ParseJsonDataError::Parse(err)
     }
 }
