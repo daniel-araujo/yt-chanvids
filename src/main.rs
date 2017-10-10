@@ -54,7 +54,35 @@ fn main() {
         },
         1 => {
             let channel = &matches.free[0];
-            print_links(channel);
+            let mut crawler = YtUploadsCrawler::channel(channel);
+
+            while let Some(link) = crawler.next() {
+                println!("{}", link);
+            }
+
+            if let &Some(ref error) = crawler.error() {
+                match error {
+                    &FetchLinksError::RequestError(ref err) => match err {
+                        &RequestError::NotFound => {
+                            print_error("Channel does not seem to be reachable.");
+                            exit(1);
+                        },
+                        &RequestError::ParseJsonDataError(ParseJsonDataError::Html(ref html)) => {
+                            let message = "A JSON request returned html:\n".to_string() + &html;
+                            print_error(&message);
+                            exit(1);
+                        },
+                        _ => {
+                            panic!(format!("{:?}", err))
+                        },
+                    },
+                    &FetchLinksError::MissingUploadsPage => {
+                        print_error("This channel does not have an Uploads page.");
+                        exit(1);
+                    },
+                }
+            }
+
             exit(0);
         },
         _ => {
@@ -63,134 +91,170 @@ fn main() {
         }
     }
 
-    fn print_links(channel: &str) {
-        match youtube_video_links(channel) {
-            Ok(mut links) => {
-                while let Some(link) = links.pop() {
-                    println!("{}", link);
-                }
-            },
-            Err(err) => match err {
-                FetchLinksError::RequestError(err) => match err {
-                    RequestError::NotFound => {
-                        print_error("Channel does not seem to be reachable.");
-                        exit(1);
-                    },
-                    RequestError::ParseJsonDataError(ParseJsonDataError::Html(html)) => {
-                        let message = "A JSON request returned html:\n".to_string() + &html;
-                        print_error(&message);
-                        exit(1);
-                    },
-                    _ => {
-                        panic!(format!("{:?}", err))
-                    },
-                },
-                FetchLinksError::MissingUploadsPage => {
-                    print_error("This channel does not have an Uploads page.");
-                    exit(1);
-                },
-            },
-        }
-    }
-
     fn print_error(message: &str) {
         write!(&mut std::io::stderr(), "{}\n", message).unwrap();
     };
 }
 
-fn youtube_video_links(channel: &str) -> Result<Vec<String>, FetchLinksError> {
-    let mut links: Vec<String> = Vec::new();
+struct YtUploadsCrawler {
+    channel: String,
 
-    // HTTP client setup.
-    let mut core = tokio_core::reactor::Core::new().unwrap();
-    let http_client = hyper::Client::configure()
-        .connector(hyper_tls::HttpsConnector::new(4, &core.handle()).unwrap())
-        .build(&core.handle());
+    links: Vec<String>,
 
-    {
-        let mut items;
-        let mut next_continuation;
+    started: bool,
 
-        let mut collect_links = |items: &serde_json::Value| {
-            for item in items.as_array().unwrap().iter() {
-                let video_id = item["gridVideoRenderer"]["videoId"].as_str().unwrap();
-                links.push(make_youtube_video_url(video_id));
-            }
-        };
+    next_continuation: serde_json::Value,
 
-        let data = uploads_page_data(&mut core, &http_client, channel)?;
+    error: Option<FetchLinksError>,
 
-        let section_list_renderer = &data[1]["response"]["contents"]["twoColumnBrowseResultsRenderer"]["tabs"][1]["tabRenderer"]["content"]["sectionListRenderer"];
-        let item_section_renderer = &section_list_renderer["contents"][0]["itemSectionRenderer"];
-        let grid_renderer = &item_section_renderer["contents"][0]["gridRenderer"];
+    tokio_core: tokio_core::reactor::Core,
 
-        items = grid_renderer["items"].clone();
-        next_continuation = grid_renderer["continuations"][0]["nextContinuationData"].clone();
-
-        if !items.is_array() {
-            return Err(FetchLinksError::MissingUploadsPage);
-        }
-
-        {
-            let mut cycle = |items: &serde_json::Value, next_continuation: &serde_json::Value|
-                    -> Result<(serde_json::Value, serde_json::Value), RequestError> {
-                let request = request_browse(
-                    next_continuation["continuation"].as_str().unwrap(),
-                    next_continuation["clickTrackingParams"].as_str().unwrap());
-
-                let work = http_client.request(request);
-
-                collect_links(items);
-
-                let response = core.run(work).unwrap();
-
-                if let hyper::StatusCode::Ok = response.status() {
-                    let data = parse_json_data(&hyper_response_body_as_string(&mut core, response)?)?;
-                    let continuation_contents = &data[1]["response"]["continuationContents"];
-                    let grid_continuation = &continuation_contents["gridContinuation"];
-
-                    let items = grid_continuation["items"].clone();
-                    let next_continuation = grid_continuation["continuations"][0]["nextContinuationData"].clone();
-
-                    Ok((items, next_continuation))
-                } else {
-                    Ok((items.clone(), serde_json::Value::default()))
-                }
-            };
-
-            while next_continuation.is_object() {
-                let result = cycle(&items, &next_continuation)?;
-
-                items = result.0;
-                next_continuation = result.1;
-            }
-        }
-
-        collect_links(&items);
-    }
-
-    Ok(links)
+    http_client: hyper::Client<hyper_tls::HttpsConnector<hyper::client::HttpConnector>>,
 }
 
-fn uploads_page_data(
-        core: &mut tokio_core::reactor::Core,
-        http_client: &hyper::Client<hyper_tls::HttpsConnector<hyper::client::HttpConnector>>,
-        id: &str) -> Result<serde_json::Value, RequestError> {
-    let candidates = [request_channel_uploads, request_user_uploads];
+impl YtUploadsCrawler {
+    /*
+     * Creates a crawler for the given channel.
+     */
+    fn channel(channel: &str) -> YtUploadsCrawler {
+        // HTTP client setup.
+        let tokio_core = tokio_core::reactor::Core::new().unwrap();
+        let http_client = hyper::Client::configure()
+            .connector(hyper_tls::HttpsConnector::new(4, &tokio_core.handle()).unwrap())
+            .build(&tokio_core.handle());
 
-    for worker in candidates.iter() {
-        let request = worker(id);
-
-        let response = core.run(http_client.request(request)).unwrap();
-
-        if let hyper::StatusCode::Ok = response.status() {
-            let data = hyper_response_body_as_string(core, response)?;
-
-            return Ok(parse_json_data(&data)?)
+        YtUploadsCrawler {
+            channel: String::from(channel),
+            links: Vec::new(),
+            started: false,
+            next_continuation: serde_json::Value::default(),
+            error: None,
+            tokio_core: tokio_core,
+            http_client: http_client,
         }
     }
 
-    Err(RequestError::NotFound)
+    /*
+     * Indicates whether an error occurred.
+     */
+    fn error(&self) -> &Option<FetchLinksError> {
+        &self.error
+    }
+
+    /*
+     * Advances to the next link and returns it.
+     */
+    fn next(&mut self) -> Option<String> {
+        if !self.started {
+            self.start();
+            self.started = true;
+        }
+
+        if self.links.is_empty() {
+            if self.next_continuation.is_object() {
+                self.follow_continuation();
+            }
+        }
+
+        self.links.pop()
+    }
+
+    /*
+     * Gets the first batch of links.
+     */
+    fn start(&mut self) {
+        match self.uploads_page_data() {
+            Ok(data) => {
+                let section_list_renderer = &data[1]["response"]["contents"]["twoColumnBrowseResultsRenderer"]["tabs"][1]["tabRenderer"]["content"]["sectionListRenderer"];
+                let item_section_renderer = &section_list_renderer["contents"][0]["itemSectionRenderer"];
+                let grid_renderer = &item_section_renderer["contents"][0]["gridRenderer"];
+
+                let items = &grid_renderer["items"];
+                let next_continuation = &grid_renderer["continuations"][0]["nextContinuationData"];
+
+                if !items.is_array() {
+                    self.error = Some(FetchLinksError::MissingUploadsPage);
+                    return;
+                }
+
+                self.collect_links(&items);
+                self.next_continuation = next_continuation.clone();
+            },
+            Err(error) => {
+                self.error = Some(FetchLinksError::from(error));
+            },
+        }
+    }
+
+    /*
+     * Follows the continuation to get more links.
+     */
+    fn follow_continuation(&mut self) {
+        match self.uploads_continuation_data() {
+            Ok(data) => {
+                let continuation_contents = &data[1]["response"]["continuationContents"];
+                let grid_continuation = &continuation_contents["gridContinuation"];
+
+                let items = &grid_continuation["items"];
+                let next_continuation = &grid_continuation["continuations"][0]["nextContinuationData"];
+
+                self.collect_links(&items);
+                self.next_continuation = next_continuation.clone();
+            },
+            Err(error) => {
+                self.error = Some(FetchLinksError::from(error));
+            },
+        }
+    }
+
+    /*
+     * Collects links from a response from YouTube.
+     */
+    fn collect_links(&mut self, items: &serde_json::Value) {
+        for item in items.as_array().unwrap().iter() {
+            let video_id = item["gridVideoRenderer"]["videoId"].as_str().unwrap();
+            self.links.push(make_youtube_video_url(video_id));
+        }
+    }
+
+    /*
+     * Returns YouTube's response for the uploads page.
+     */
+    fn uploads_page_data(&mut self) -> Result<serde_json::Value, RequestError> {
+        let candidates = [request_channel_uploads, request_user_uploads];
+
+        for worker in candidates.iter() {
+            let request = worker(&self.channel);
+
+            let response = self.tokio_core.run(self.http_client.request(request)).unwrap();
+
+            if let hyper::StatusCode::Ok = response.status() {
+                let data = hyper_response_body_as_string(&mut self.tokio_core, response)?;
+
+                return Ok(parse_json_data(&data)?)
+            }
+        }
+
+        Err(RequestError::NotFound)
+    }
+
+    fn uploads_continuation_data(&mut self) -> Result<serde_json::Value, RequestError> {
+        let request = request_browse(
+            self.next_continuation["continuation"].as_str().unwrap(),
+            self.next_continuation["clickTrackingParams"].as_str().unwrap());
+
+        let work = self.http_client.request(request);
+
+        let response = self.tokio_core.run(work).unwrap();
+
+        if let hyper::StatusCode::Ok = response.status() {
+            let data = hyper_response_body_as_string(&mut self.tokio_core, response)?;
+
+            return Ok(parse_json_data(&data)?)
+        } else {
+            Err(RequestError::NotFound)
+        }
+    }
 }
 
 fn request_channel_uploads(channel: &str) -> hyper::Request {
