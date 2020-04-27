@@ -1,7 +1,7 @@
 extern crate getopts;
 extern crate hyper;
 extern crate hyper_tls;
-extern crate tokio_core;
+extern crate tokio;
 extern crate futures;
 extern crate serde;
 extern crate serde_json;
@@ -15,9 +15,6 @@ use std::io::Write;
 use std::str::FromStr;
 
 use getopts::Options;
-
-use futures::Future;
-use futures::Stream;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -107,7 +104,7 @@ struct YtUploadsCrawler {
 
     error: Option<FetchLinksError>,
 
-    tokio_core: tokio_core::reactor::Core,
+    tokio_runtime: tokio::runtime::Runtime,
 
     http_client: hyper::Client<hyper_tls::HttpsConnector<hyper::client::HttpConnector>>,
 }
@@ -118,10 +115,9 @@ impl YtUploadsCrawler {
      */
     fn channel(channel: &str) -> YtUploadsCrawler {
         // HTTP client setup.
-        let tokio_core = tokio_core::reactor::Core::new().unwrap();
-        let http_client = hyper::Client::configure()
-            .connector(hyper_tls::HttpsConnector::new(4, &tokio_core.handle()).unwrap())
-            .build(&tokio_core.handle());
+        let tokio_runtime = tokio::runtime::Runtime::new().unwrap();
+        let https_connector = hyper_tls::HttpsConnector::new();
+        let http_client = hyper::Client::builder().build(https_connector);
 
         YtUploadsCrawler {
             channel: String::from(channel),
@@ -129,7 +125,7 @@ impl YtUploadsCrawler {
             started: false,
             next_continuation: serde_json::Value::default(),
             error: None,
-            tokio_core: tokio_core,
+            tokio_runtime: tokio_runtime,
             http_client: http_client,
         }
     }
@@ -226,10 +222,10 @@ impl YtUploadsCrawler {
         for worker in candidates.iter() {
             let request = worker(&self.channel);
 
-            let response = self.tokio_core.run(self.http_client.request(request)).unwrap();
+            let mut response = self.tokio_runtime.block_on(self.http_client.request(request)).unwrap();
 
-            if let hyper::StatusCode::Ok = response.status() {
-                let data = hyper_response_body_as_string(&mut self.tokio_core, response)?;
+            if let hyper::StatusCode::OK = response.status() {
+                let data = hyper_response_body_as_string(&mut self.tokio_runtime, &mut response)?;
 
                 return Ok(parse_json_data(&data)?)
             }
@@ -243,12 +239,10 @@ impl YtUploadsCrawler {
             self.next_continuation["continuation"].as_str().unwrap(),
             self.next_continuation["clickTrackingParams"].as_str().unwrap());
 
-        let work = self.http_client.request(request);
+        let mut response = self.tokio_runtime.block_on(self.http_client.request(request)).unwrap();
 
-        let response = self.tokio_core.run(work).unwrap();
-
-        if let hyper::StatusCode::Ok = response.status() {
-            let data = hyper_response_body_as_string(&mut self.tokio_core, response)?;
+        if let hyper::StatusCode::OK = response.status() {
+            let data = hyper_response_body_as_string(&mut self.tokio_runtime, &mut response)?;
 
             return Ok(parse_json_data(&data)?)
         } else {
@@ -257,35 +251,43 @@ impl YtUploadsCrawler {
     }
 }
 
-fn request_channel_uploads(channel: &str) -> hyper::Request {
+fn request_channel_uploads(channel: &str) -> hyper::Request<hyper::Body> {
     let url = hyper::Uri::from_str(
         &(String::from("https://www.youtube.com/channel/")
             + channel
             + "/videos?view=0&flow=grid&pbj=1"))
         .unwrap();
 
-    let mut request = hyper::Request::new(hyper::Method::Get, url);
-    request.headers_mut().set_raw("x-youtube-client-name", "1");
-    request.headers_mut().set_raw("x-youtube-client-version", "2.20170927");
+    let request = hyper::Request::builder()
+        .method("GET")
+        .uri(url)
+        .header("x-youtube-client-name", "1")
+        .header("x-youtube-client-version", "2.20170927")
+        .body(hyper::Body::empty())
+        .unwrap();
 
     request
 }
 
-fn request_user_uploads(user: &str) -> hyper::Request {
+fn request_user_uploads(user: &str) -> hyper::Request<hyper::Body> {
     let url = hyper::Uri::from_str(
         &(String::from("https://www.youtube.com/user/")
             + user
             + "/videos?view=0&flow=grid&pbj=1"))
         .unwrap();
 
-    let mut request = hyper::Request::new(hyper::Method::Get, url);
-    request.headers_mut().set_raw("x-youtube-client-name", "1");
-    request.headers_mut().set_raw("x-youtube-client-version", "2.20170927");
+    let request = hyper::Request::builder()
+        .method("GET")
+        .uri(url)
+        .header("x-youtube-client-name", "1")
+        .header("x-youtube-client-version", "2.20170927")
+        .body(hyper::Body::empty())
+        .unwrap();
 
     request
 }
 
-fn request_browse(ctoken: &str, itct: &str) -> hyper::Request {
+fn request_browse(ctoken: &str, itct: &str) -> hyper::Request<hyper::Body> {
     #[derive(Deserialize, Serialize)]
     struct Query {
         ctoken: String,
@@ -301,26 +303,27 @@ fn request_browse(ctoken: &str, itct: &str) -> hyper::Request {
             + &serde_qs::to_string(&query).unwrap()))
         .unwrap();
 
-    let mut request = hyper::Request::new(hyper::Method::Get, url);
-    request.headers_mut().set_raw("x-youtube-client-name", "1");
-    request.headers_mut().set_raw("x-youtube-client-version", "2.20170927");
+    let request = hyper::Request::builder()
+        .method("GET")
+        .uri(url)
+        .header("x-youtube-client-name", "1")
+        .header("x-youtube-client-version", "2.20170927")
+        .body(hyper::Body::empty())
+        .unwrap();
 
     request
 }
 
 fn hyper_response_body_as_string(
-        core: &mut tokio_core::reactor::Core,
-        response: hyper::Response) -> Result<String, hyper::Error> {
-    let work = response.body().concat2()
-        .and_then(|chunk| {
-            Ok(String::from_utf8(chunk.to_vec()).unwrap())
-        });
+        tokio_runtime: &mut tokio::runtime::Runtime,
+        response: &mut hyper::Response<hyper::Body>) -> Result<String, hyper::Error> {
+    let bytes = tokio_runtime.block_on(hyper::body::to_bytes(response.body_mut())).unwrap();
 
-    core.run(work)
+    Ok(String::from_utf8(bytes.to_vec()).unwrap())
 }
 
 fn parse_json_data(string: &str) -> Result<serde_json::Value, ParseJsonDataError> {
-    let s = String::from(string.trim_left());
+    let s = String::from(string.trim_start());
 
     if s.starts_with("<!") {
         return Err(ParseJsonDataError::Html(s));
@@ -357,7 +360,6 @@ impl From<RequestError> for FetchLinksError {
 #[derive(Debug)]
 enum RequestError {
     HyperError(hyper::Error),
-    HyperUriError(hyper::error::UriError),
     Io(std::io::Error),
     ParseJsonDataError(ParseJsonDataError),
     NotFound,
@@ -378,12 +380,6 @@ impl From<ParseJsonDataError> for RequestError {
 impl From<std::io::Error> for RequestError {
     fn from(err: std::io::Error) -> RequestError {
         RequestError::Io(err)
-    }
-}
-
-impl From<hyper::error::UriError> for RequestError {
-    fn from(err: hyper::error::UriError) -> RequestError {
-        RequestError::HyperUriError(err)
     }
 }
 
