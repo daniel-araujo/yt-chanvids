@@ -13,16 +13,17 @@ https://www.youtube.com/watch?v=LZ0rGTsdfwk
 
 ## Installation
 
-At the moment it's only available from source. It should be compilable on any
-platform where [Rust] is supported. [Cargo] will do most of the work for you.
+This program is published on Crates.io so you can easily get it by running cargo
+install, like so:
 
 ```
-cargo install --path  .
+cargo install yt-chanvids
 ```
 
-This will compile and install the program to `~/.cargo/bin`. For convenience
-you can add that directory to your `PATH` environment variable. The examples
-in this file assume that has been done.
+All binaries installed with cargo install are stored in the installation root’s
+bin folder. If you installed Rust using rustup.rs and don’t have any custom
+configurations, this directory will be $HOME/.cargo/bin. Ensure that directory
+is in your $PATH to be able to run programs you’ve installed with cargo install.
 
 
 ## Usage
