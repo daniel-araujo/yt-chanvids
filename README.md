@@ -32,26 +32,28 @@ is in your $PATH to be able to run programs you’ve installed with cargo instal
 yt-chanvids [OPTIONS] [--] CHANNEL-ID|USERNAME
 ```
 
-You can pass either the username or the channel id of a YouTube channel (which
-can be spotted in the address of their page) and the program will print a line
-separated list of links to the standard output stream.
+You can pass a username or a channel id. They can be found easily in the URL of
+a YouTube channel's page.
 
-When the program faces an unexpected situation, it will write any diagnostic
-message to the standard error stream. It may terminate execution and when it
-does it will always return an error exit code.
+The program will produce a line for each video that it can find. A line only contains a URL to the video.
 
-At the moment there is only the help option (`-h`, `--help`) available which
-makes the program do nothing but print usage instructions.  The `--` sequence
-is useful to prevent any arguments after it to be interpreted as options.
+The exit code will be 0 if the program does not encounter any problems. Any
+other value indicates a problem and you will most likely find an error message
+in the standard error stream.
+
+The only option available at the moment is the help option (`-h`, `--help`)
+which makes the program do nothing but print usage instructions.
+
+The `--` sequence is useful for preventing channel ids and usernames to be
+interpreted as options if they begin with dashes.
 
 
 ## Examples
 
-The following examples assume bash as the shell. Long output is redacted with
+The following examples work on bash. Long output is redacted with
 `[...]`.
 
-Getting the links is as simple as passing a channel id or username to the
-program.
+You can get a list by either passing a channel id:
 
 ```
 # Passing a channel id.
@@ -64,6 +66,8 @@ https://www.youtube.com/watch?v=d63CSqjM44k
 [...]
 ```
 
+Or a username:
+
 ```
 # Passing a username.
 $ yt-chanvids HowToBasic
@@ -75,17 +79,17 @@ https://www.youtube.com/watch?v=d63CSqjM44k
 [...]
 ```
 
-If your shell supports redirection of output, you can probably do things like
-inserting content to files or sending it to the input stream of an other
-command. Having the links separated by new lines makes it easy for other
-commands to manipulate them.
+With redirection you're able to save the list to a file:
 
 ```
-# Creates a file with the list of links.
+# Saves list to a file.
 $ yt-chanvids Vsauce > to-watch.txt
-# Inserts more links to the end of the file.
+
+# Appends more links to the existing file.
 $ yt-chanvids Vsauce2 >> to-watch.txt
 ```
+
+Pipe the list to another command:
 
 ```
 # Counts the number of public videos of a channel.
@@ -93,8 +97,10 @@ $ yt-chanvids PewDiePie | wc -l
 2929
 ```
 
+And even perform complex operations:
+
 ```
-# Shortens the links.
+# Shortens urls.
 $ yt-chanvids PewDiePie | sed "s/^https:\/\/www\.youtube\.com\/watch?v=/https:\/\/youtu.be\//"
 https://youtu.be/0zYI8FjSF_k
 https://youtu.be/X4dAPKYPhDQ
