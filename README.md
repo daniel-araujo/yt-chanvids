@@ -109,6 +109,18 @@ https://youtu.be/LZ0rGTsdfwk
 ```
 
 
+## Contributing
+
+The easiest way to contribute is by starring this project on GitHub!
+
+https://github.com/daniel-araujo/yt-chanvids
+
+If you've found a bug, would like to suggest a feature or need help, feel free
+to create an issue on GitHub:
+
+https://github.com/daniel-araujo/yt-chanvids/issues
+
+
 ## License
 
 This program is free software: you can redistribute it and/or modify it under
