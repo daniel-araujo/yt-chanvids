@@ -32,8 +32,8 @@ is in your $PATH to be able to run programs you’ve installed with cargo instal
 yt-chanvids [OPTIONS] [--] CHANNEL-ID|USERNAME
 ```
 
-You can pass a username or a channel id. They can be found easily in the URL of
-a YouTube channel's page.
+You can pass a username or a channel id. They can be found in the URL of a
+YouTube channel's page.
 
 The program will produce a line for each video that it can find. A line only contains a URL to the video.
 
