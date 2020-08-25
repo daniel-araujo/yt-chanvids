@@ -54,7 +54,7 @@ fn main() {
             let mut crawler = YtUploadsCrawler::channel(channel);
 
             while let Some(link) = crawler.next() {
-                println!("{}", link);
+                println!("{}", link.url);
             }
 
             if let &Some(ref error) = crawler.error() {
@@ -93,10 +93,15 @@ fn main() {
     };
 }
 
+pub struct VideoInfo {
+    pub url: String,
+    pub title: String,
+}
+
 struct YtUploadsCrawler {
     channel: String,
 
-    links: Vec<String>,
+    links: Vec<VideoInfo>,
 
     started: bool,
 
@@ -140,7 +145,7 @@ impl YtUploadsCrawler {
     /*
      * Advances to the next link and returns it.
      */
-    fn next(&mut self) -> Option<String> {
+    fn next(&mut self) -> Option<VideoInfo> {
         if !self.started {
             self.start();
             self.started = true;
@@ -208,8 +213,15 @@ impl YtUploadsCrawler {
      */
     fn collect_links(&mut self, items: &serde_json::Value) {
         for item in items.as_array().unwrap().iter() {
+            // dbg!(item);
             let video_id = item["gridVideoRenderer"]["videoId"].as_str().unwrap();
-            self.links.push(make_youtube_video_url(video_id));
+            let info = VideoInfo{
+                url: make_youtube_video_url(video_id),
+                title: item["gridVideoRenderer"]["title"]["runs"][0]["text"].as_str().unwrap_or(
+                    item["gridVideoRenderer"]["title"]["simpleText"].as_str().unwrap_or(""),
+                ).into(),
+            };
+            self.links.push(info);
         }
     }
 
