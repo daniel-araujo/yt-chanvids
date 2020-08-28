@@ -6,6 +6,15 @@ authors = ["Daniel Araujo <contact@daniel-araujo.pt>"]
 repository = "https://github.com/daniel-araujo/yt-chanvids.git"
 license = "GPL-3.0-or-later"
 readme = "README.md"
+edition = "2018"
+
+[lib]
+name = "yt_chanvids"
+path = "src/lib.rs"
+
+[[bin]]
+name = "yt-chanvids"
+path = "src/cli.rs"
 
 [dependencies]
 
