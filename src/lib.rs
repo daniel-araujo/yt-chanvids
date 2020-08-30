@@ -1,3 +1,107 @@
+pub struct ChannelDetail {
+    pub title: String,
+    pub author_thumbnail: String,
+    pub description: String,
+}
+
+pub struct YtChannelDetailScraper {
+    id: String,
+}
+
+impl YtChannelDetailScraper {
+    pub fn from_id(id: &str) -> YtChannelDetailScraper {
+        YtChannelDetailScraper { id: id.into() }
+    }
+
+    pub fn get(&self) -> ChannelDetail {
+        let url_chan = format!(
+            "https://youtube.com/channel/{}/about?flow=grid&view=0&pbj=1",
+            self.id
+        );
+        let url_user = format!(
+            "https://youtube.com/user/{}/about?flow=grid&view=0&pbj=1",
+            self.id
+        );
+        let mut response = None;
+        for url in vec![url_chan, url_user] {
+            let res = attohttpc::get(&url)
+                .header("x-youtube-client-name", "1")
+                .header("x-youtube-client-version", "2.20170927")
+                .send()
+                .unwrap();
+            if res.is_success() {
+                response = Some(res);
+                break;
+            }
+        }
+
+        let text = response.unwrap().text().unwrap();
+        let data: serde_json::Value = serde_json::from_str(&text).unwrap();
+
+        fn dec(x: &serde_json::Value) -> String {
+            x.as_str().unwrap().into()
+        }
+
+        let title = dec(&data[1]["response"]["metadata"]["channelMetadataRenderer"]["title"]);
+        let desc = dec(&data[1]["response"]["metadata"]["channelMetadataRenderer"]["description"]);
+        let thumb = dec(
+            &data[1]["response"]["metadata"]["channelMetadataRenderer"]["avatar"]["thumbnails"][0]
+                ["url"],
+        );
+        ChannelDetail {
+            author_thumbnail: thumb,
+            title: title,
+            description: desc,
+        }
+    }
+}
+
+pub struct VideoDetail {
+    pub title: String,
+    pub description: String,
+    pub duration_seconds: i32,
+    pub publish_date: String,
+}
+
+pub struct YtVideoDetailScraper {
+    id: String,
+}
+
+impl YtVideoDetailScraper {
+    pub fn from_id(id: &str) -> YtVideoDetailScraper {
+        YtVideoDetailScraper { id: id.into() }
+    }
+
+    pub fn get(&self) -> VideoDetail {
+        let url = format!(
+            "https://www.youtube.com/get_video_info?video_id={}",
+            self.id
+        );
+        let response = attohttpc::get(url).send().unwrap();
+        let text = response.text().unwrap();
+        for chunk in text.split("&") {
+            if chunk.starts_with("player_response=") {
+                let clean = chunk.replace("player_response=", "");
+                let json_src = &urlencoding::decode(&clean).unwrap().replace("+", " ");
+
+                let j: serde_json::Value = serde_json::from_str(&json_src).unwrap();
+                fn dec(x: &serde_json::Value) -> String {
+                    urlencoding::decode(x.as_str().unwrap()).unwrap()
+                }
+                return VideoDetail {
+                    title: dec(&j["videoDetails"]["title"]),
+                    description: dec(&j["videoDetails"]["shortDescription"]),
+                    duration_seconds: dec(&j["videoDetails"]["lengthSeconds"])
+                        .parse::<i32>()
+                        .unwrap(),
+                    publish_date: dec(&j["microformat"]["playerMicroformatRenderer"]["uploadDate"]),
+                };
+            }
+        }
+        unreachable!();
+    }
+}
+
 pub struct VideoInfo {
     pub id: String,
     pub url: String,
@@ -11,7 +115,6 @@ pub struct YtUploadsCrawler {
     started: bool,
     next_continuation: serde_json::Value,
     error: Option<FetchLinksError>,
-    http_client: attohttpc::Session,
 }
 
 impl YtUploadsCrawler {
@@ -19,16 +122,12 @@ impl YtUploadsCrawler {
      * Creates a crawler for the given channel.
      */
     pub fn channel(channel: &str) -> YtUploadsCrawler {
-        // HTTP client setup.
-        let http_client = attohttpc::Session::new();
-
         YtUploadsCrawler {
             channel: String::from(channel),
             links: Vec::new(),
             started: false,
             next_continuation: serde_json::Value::default(),
             error: None,
-            http_client: http_client,
         }
     }
 
@@ -113,7 +212,7 @@ impl YtUploadsCrawler {
      * Collects links from a response from YouTube.
      */
     fn collect_links(&mut self, items: &serde_json::Value) {
-        for item in items.as_array().unwrap().iter() {
+        for item in items.as_array().unwrap().iter().rev() {
             // dbg!(item);
             let video_id = item["gridVideoRenderer"]["videoId"].as_str().unwrap();
             let info = VideoInfo {
@@ -171,7 +270,10 @@ impl YtUploadsCrawler {
 }
 
 fn request_channel_uploads(channel: &str) -> Result<attohttpc::Response, attohttpc::Error> {
-    let url = format!("https://www.youtube.com/channel/{}/videos?view=0&flow=grid&pbj=1", channel);
+    let url = format!(
+        "https://www.youtube.com/channel/{}/videos?view=0&flow=grid&pbj=1&sort=dd",
+        channel
+    );
 
     attohttpc::get(url)
         .header("x-youtube-client-name", "1")
@@ -180,7 +282,10 @@ fn request_channel_uploads(channel: &str) -> Result<attohttpc::Response, attohtt
 }
 
 fn request_user_uploads(user: &str) -> Result<attohttpc::Response, attohttpc::Error> {
-    let url = format!("https://www.youtube.com/user/{}/videos?view=0&flow=grid&pbj=1", user);
+    let url = format!(
+        "https://www.youtube.com/user/{}/videos?view=0&flow=grid&pbj=1&sort=dd",
+        user
+    );
 
     attohttpc::get(url)
         .header("x-youtube-client-name", "1")
@@ -192,7 +297,8 @@ fn request_browse(ctoken: &str, itct: &str) -> Result<attohttpc::Response, attoh
     let url = format!(
         "https://www.youtube.com/browse_ajax?ctoken={}&itct={}",
         urlencoding::encode(ctoken),
-        urlencoding::encode(itct));
+        urlencoding::encode(itct)
+    );
 
     let request = attohttpc::get(url)
         .header("x-youtube-client-name", "1")
@@ -201,7 +307,6 @@ fn request_browse(ctoken: &str, itct: &str) -> Result<attohttpc::Response, attoh
 
     request
 }
-
 
 fn parse_json_data(string: &str) -> Result<serde_json::Value, ParseJsonDataError> {
     let s = String::from(string.trim_start());
