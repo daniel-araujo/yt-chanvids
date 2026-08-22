@@ -1,6 +1,8 @@
 # yt-chanvids
 
-Generates a list of links to all public videos of a YouTube channel.
+Lists all public videos of a YouTube channel, and looks up details about a
+channel or a single video, from a channel/video id, username or pasted
+URL as plain text or JSON.
 
 ```
 $ yt-chanvids list PewDiePie

@@ -1,6 +1,6 @@
 [package]
 name = "yt-chanvids"
-description = "Generates a list of links to all public videos of a YouTube channel."
+description = "Lists a YouTube channel's videos or looks up channel/video details."
 version = "1.3.0"
 authors = ["Daniel Araujo <contact@daniel-araujo.pt>"]
 repository = "https://github.com/daniel-araujo/yt-chanvids.git"
