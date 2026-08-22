@@ -30,12 +30,19 @@ is in your $PATH to be able to run programs you’ve installed with cargo instal
 
 ```
 yt-chanvids [OPTIONS] [--] CHANNEL-ID|USERNAME
+yt-chanvids channel [OPTIONS] [--] CHANNEL-ID|USERNAME
+yt-chanvids video [OPTIONS] [--] VIDEO-ID
 ```
 
 You can pass a username or a channel id. They can be found in the URL of a
 YouTube channel's page.
 
-The program will produce a line for each video that it can find. A line only contains a URL to the video.
+The first form produces a line for each video that it can find. A line only
+contains a URL to the video.
+
+The `channel` subcommand prints a channel's title, thumbnail and description.
+The `video` subcommand prints a video's title, publish date, duration (in
+seconds) and description.
 
 The exit code will be 0 if the program does not encounter any problems. Any
 other value indicates a problem and you will most likely find an error message
@@ -106,6 +113,26 @@ https://youtu.be/0zYI8FjSF_k
 https://youtu.be/X4dAPKYPhDQ
 https://youtu.be/LZ0rGTsdfwk
 [...]
+```
+
+
+Getting details about a channel:
+
+```
+$ yt-chanvids channel PewDiePie
+Title: PewDiePie
+Thumbnail: https://yt3.googleusercontent.com/[...]
+Description: I make videos.
+```
+
+Or a video:
+
+```
+$ yt-chanvids video jNQXAC9IVRw
+Title: Me at the zoo
+Published: 2005-04-23T20:31:52-07:00
+Duration: 19s
+Description: [...]
 ```
 
 

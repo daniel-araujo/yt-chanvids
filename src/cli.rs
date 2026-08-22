@@ -4,7 +4,10 @@ use std::process::exit;
 
 use getopts::Options;
 
-use yt_chanvids::{FetchLinksError, ParseJsonDataError, RequestError, YtUploadsCrawler};
+use yt_chanvids::{
+    ChannelDetail, FetchLinksError, ParseJsonDataError, RequestError, VideoDetail,
+    YtChannelDetailScraper, YtUploadsCrawler, YtVideoDetailScraper,
+};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -18,7 +21,10 @@ fn main() {
         Err(f) => panic!("{}", f.to_string()),
     };
 
-    let usage = format!("Usage: {} [OPTIONS] [--] CHANNEL-ID|USERNAME", program);
+    let usage = format!(
+        "Usage: {program} [OPTIONS] [--] CHANNEL-ID|USERNAME\n   or: {program} channel [OPTIONS] [--] CHANNEL-ID|USERNAME\n   or: {program} video [OPTIONS] [--] VIDEO-ID",
+        program = program
+    );
 
     let print_help = || {
         write!(&mut std::io::stdout(), "{}", opts.usage(&usage)).unwrap();
@@ -34,49 +40,80 @@ fn main() {
         exit(0);
     }
 
-    match matches.free.len() {
-        0 => {
+    match matches.free.as_slice() {
+        [channel] => list_links(channel),
+        [subcommand, id] if subcommand == "channel" => show_channel(id),
+        [subcommand, id] if subcommand == "video" => show_video(id),
+        [] => {
             print_usage_mistake("Channel id or username not provided.");
             exit(1);
-        }
-        1 => {
-            let channel = &matches.free[0];
-            let mut crawler = YtUploadsCrawler::channel(channel);
-
-            while let Some(link) = crawler.next() {
-                println!("{}", link.url);
-            }
-
-            if let &Some(ref error) = crawler.error() {
-                match error {
-                    &FetchLinksError::RequestError(ref err) => match err {
-                        &RequestError::NotFound => {
-                            print_error("Channel does not seem to be reachable.");
-                            exit(1);
-                        }
-                        &RequestError::ParseJsonDataError(ParseJsonDataError::Html(ref html)) => {
-                            let message = "A JSON request returned html:\n".to_string() + &html;
-                            print_error(&message);
-                            exit(1);
-                        }
-                        _ => panic!("{:?}", err),
-                    },
-                    &FetchLinksError::MissingUploadsPage => {
-                        print_error("This channel does not have an Uploads page.");
-                        exit(1);
-                    }
-                }
-            }
-
-            exit(0);
         }
         _ => {
             print_usage_mistake("Unexpected number of arguments.");
             exit(1);
         }
     }
+}
 
-    fn print_error(message: &str) {
-        write!(&mut std::io::stderr(), "{}\n", message).unwrap();
+fn list_links(channel: &str) {
+    let mut crawler = YtUploadsCrawler::channel(channel);
+
+    while let Some(link) = crawler.next() {
+        println!("{}", link.url);
     }
+
+    if let &Some(ref error) = crawler.error() {
+        match error {
+            &FetchLinksError::RequestError(ref err) => match err {
+                &RequestError::NotFound => {
+                    print_error("Channel does not seem to be reachable.");
+                    exit(1);
+                }
+                &RequestError::ParseJsonDataError(ParseJsonDataError::Html(ref html)) => {
+                    let message = "A JSON request returned html:\n".to_string() + &html;
+                    print_error(&message);
+                    exit(1);
+                }
+                _ => panic!("{:?}", err),
+            },
+            &FetchLinksError::MissingUploadsPage => {
+                print_error("This channel does not have an Uploads page.");
+                exit(1);
+            }
+        }
+    }
+
+    exit(0);
+}
+
+fn show_channel(id: &str) {
+    let ChannelDetail {
+        title,
+        description,
+        author_thumbnail,
+    } = YtChannelDetailScraper::from_id(id).get();
+
+    println!("Title: {}", title);
+    println!("Thumbnail: {}", author_thumbnail);
+    println!("Description: {}", description);
+    exit(0);
+}
+
+fn show_video(id: &str) {
+    let VideoDetail {
+        title,
+        description,
+        duration_seconds,
+        publish_date,
+    } = YtVideoDetailScraper::from_id(id).get();
+
+    println!("Title: {}", title);
+    println!("Published: {}", publish_date);
+    println!("Duration: {}s", duration_seconds);
+    println!("Description: {}", description);
+    exit(0);
+}
+
+fn print_error(message: &str) {
+    write!(&mut std::io::stderr(), "{}\n", message).unwrap();
 }
