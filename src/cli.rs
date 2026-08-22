@@ -15,7 +15,7 @@ fn main() {
 
     let matches = match opts.parse(&args[1..]) {
         Ok(m) => m,
-        Err(f) => panic!(f.to_string()),
+        Err(f) => panic!("{}", f.to_string()),
     };
 
     let usage = format!("Usage: {} [OPTIONS] [--] CHANNEL-ID|USERNAME", program);
@@ -59,7 +59,7 @@ fn main() {
                             print_error(&message);
                             exit(1);
                         }
-                        _ => panic!(format!("{:?}", err)),
+                        _ => panic!("{:?}", err),
                     },
                     &FetchLinksError::MissingUploadsPage => {
                         print_error("This channel does not have an Uploads page.");
@@ -78,5 +78,5 @@ fn main() {
 
     fn print_error(message: &str) {
         write!(&mut std::io::stderr(), "{}\n", message).unwrap();
-    };
+    }
 }

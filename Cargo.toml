@@ -19,7 +19,7 @@ path = "src/cli.rs"
 [dependencies]
 
 # HTTP requests.
-attohttpc = "0.15"
+attohttpc = "0.30"
 
 # Parsing command line.
 getopts = "0.2"
@@ -27,4 +27,4 @@ getopts = "0.2"
 # Parsing json, url query strings.
 serde = "1.0"
 serde_json = "1.0"
-urlencoding = "1.1"
+urlencoding = "2"
