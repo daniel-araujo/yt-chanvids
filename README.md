@@ -30,6 +30,7 @@ is in your $PATH to be able to run programs you’ve installed with cargo instal
 
 ```
 yt-chanvids [OPTIONS] [--] CHANNEL-ID|USERNAME
+yt-chanvids list [OPTIONS] [--] CHANNEL-ID|USERNAME
 yt-chanvids channel [OPTIONS] [--] CHANNEL-ID|USERNAME
 yt-chanvids video [OPTIONS] [--] VIDEO-ID
 ```
@@ -37,8 +38,10 @@ yt-chanvids video [OPTIONS] [--] VIDEO-ID
 You can pass a username or a channel id. They can be found in the URL of a
 YouTube channel's page.
 
-The first form produces a line for each video that it can find. A line only
-contains a URL to the video.
+The first two forms are equivalent and produce a line for each video that
+they can find. A line only contains a URL to the video. The `list` form is
+provided as an explicit alternative to the bare form, alongside `channel`
+and `video`.
 
 The `channel` subcommand prints a channel's title, thumbnail and description.
 The `video` subcommand prints a video's title, publish date, duration (in
@@ -112,6 +115,17 @@ $ yt-chanvids PewDiePie | sed "s/^https:\/\/www\.youtube\.com\/watch?v=/https:\/
 https://youtu.be/0zYI8FjSF_k
 https://youtu.be/X4dAPKYPhDQ
 https://youtu.be/LZ0rGTsdfwk
+[...]
+```
+
+
+The `list` subcommand does the same thing, explicitly:
+
+```
+$ yt-chanvids list PewDiePie
+https://www.youtube.com/watch?v=0zYI8FjSF_k
+https://www.youtube.com/watch?v=X4dAPKYPhDQ
+https://www.youtube.com/watch?v=LZ0rGTsdfwk
 [...]
 ```
 

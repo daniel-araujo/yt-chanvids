@@ -22,7 +22,7 @@ fn main() {
     };
 
     let usage = format!(
-        "Usage: {program} [OPTIONS] [--] CHANNEL-ID|USERNAME\n   or: {program} channel [OPTIONS] [--] CHANNEL-ID|USERNAME\n   or: {program} video [OPTIONS] [--] VIDEO-ID",
+        "Usage: {program} [OPTIONS] [--] CHANNEL-ID|USERNAME\n   or: {program} list [OPTIONS] [--] CHANNEL-ID|USERNAME\n   or: {program} channel [OPTIONS] [--] CHANNEL-ID|USERNAME\n   or: {program} video [OPTIONS] [--] VIDEO-ID",
         program = program
     );
 
@@ -42,6 +42,7 @@ fn main() {
 
     match matches.free.as_slice() {
         [channel] => list_links(channel),
+        [subcommand, id] if subcommand == "list" => list_links(id),
         [subcommand, id] if subcommand == "channel" => show_channel(id),
         [subcommand, id] if subcommand == "video" => show_video(id),
         [] => {
