@@ -523,3 +523,231 @@ impl From<serde_json::Error> for ParseJsonDataError {
         ParseJsonDataError::Parse(err)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extract_balanced_json_finds_object_after_marker() {
+        let html = r#"<script>var ytInitialData = {"a":1,"b":{"c":"}not a brace{"}};</script>"#;
+
+        let json = extract_balanced_json(html, "var ytInitialData = ").unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(json).unwrap();
+
+        assert_eq!(parsed["a"], 1);
+        assert_eq!(parsed["b"]["c"], "}not a brace{");
+    }
+
+    #[test]
+    fn extract_balanced_json_stops_at_matching_brace() {
+        let html = r#"var ytInitialData = {"x":1}; var somethingElse = {"y":2};"#;
+
+        let json = extract_balanced_json(html, "var ytInitialData = ").unwrap();
+
+        assert_eq!(json, r#"{"x":1}"#);
+    }
+
+    #[test]
+    fn extract_balanced_json_missing_marker_returns_none() {
+        let html = "<script>nothing here</script>";
+
+        assert!(extract_balanced_json(html, "var ytInitialData = ").is_none());
+    }
+
+    #[test]
+    fn extract_quoted_value_finds_value() {
+        let html = r#"blah,"INNERTUBE_API_KEY":"AIzaTest123","other":true"#;
+
+        let value = extract_quoted_value(html, "\"INNERTUBE_API_KEY\":\"").unwrap();
+
+        assert_eq!(value, "AIzaTest123");
+    }
+
+    #[test]
+    fn extract_quoted_value_missing_marker_returns_none() {
+        let html = "no key here";
+
+        assert!(extract_quoted_value(html, "\"INNERTUBE_API_KEY\":\"").is_none());
+    }
+
+    #[test]
+    fn find_videos_tab_content_returns_selected_tab() {
+        let data = serde_json::json!({
+            "contents": {
+                "twoColumnBrowseResultsRenderer": {
+                    "tabs": [
+                        {"tabRenderer": {"title": "Home", "selected": false, "content": {"marker": "home"}}},
+                        {"tabRenderer": {"title": "Videos", "selected": true, "content": {"marker": "videos"}}},
+                        {"tabRenderer": {"title": "Playlists", "selected": false, "content": {"marker": "playlists"}}}
+                    ]
+                }
+            }
+        });
+
+        let content = find_videos_tab_content(&data).unwrap();
+
+        assert_eq!(content["marker"], "videos");
+    }
+
+    #[test]
+    fn find_videos_tab_content_none_when_no_tab_selected() {
+        let data = serde_json::json!({
+            "contents": {
+                "twoColumnBrowseResultsRenderer": {
+                    "tabs": [
+                        {"tabRenderer": {"title": "Home", "selected": false, "content": {}}}
+                    ]
+                }
+            }
+        });
+
+        assert!(find_videos_tab_content(&data).is_none());
+    }
+
+    #[test]
+    fn find_videos_tab_content_none_when_shape_unexpected() {
+        let data = serde_json::json!({"contents": {}});
+
+        assert!(find_videos_tab_content(&data).is_none());
+    }
+
+    fn lockup_item(video_id: &str, title: &str, thumbnail_url: &str) -> serde_json::Value {
+        serde_json::json!({
+            "richItemRenderer": {
+                "content": {
+                    "lockupViewModel": {
+                        "contentId": video_id,
+                        "metadata": {
+                            "lockupMetadataViewModel": {
+                                "title": {"content": title}
+                            }
+                        },
+                        "contentImage": {
+                            "thumbnailViewModel": {
+                                "image": {"sources": [{"url": thumbnail_url}]}
+                            }
+                        }
+                    }
+                }
+            }
+        })
+    }
+
+    fn continuation_item(token: &str) -> serde_json::Value {
+        serde_json::json!({
+            "continuationItemRenderer": {
+                "continuationEndpoint": {
+                    "continuationCommand": {"token": token}
+                }
+            }
+        })
+    }
+
+    #[test]
+    fn parse_grid_items_extracts_videos_and_continuation() {
+        let items = vec![
+            lockup_item("abc123", "First video", "https://example.com/1.jpg"),
+            lockup_item("def456", "Second video", "https://example.com/2.jpg"),
+            continuation_item("next-page-token"),
+        ];
+
+        let grid = parse_grid_items(&items);
+
+        assert_eq!(grid.items.len(), 2);
+        assert_eq!(grid.items[0].id, "abc123");
+        assert_eq!(grid.items[0].title, "First video");
+        assert_eq!(grid.items[0].thumbnail, "https://example.com/1.jpg");
+        assert_eq!(grid.items[0].url, "https://www.youtube.com/watch?v=abc123");
+        assert_eq!(grid.items[1].id, "def456");
+        assert_eq!(grid.next_continuation, Some("next-page-token".to_string()));
+    }
+
+    #[test]
+    fn parse_grid_items_last_page_has_no_continuation() {
+        let items = vec![lockup_item("abc123", "Only video", "https://example.com/1.jpg")];
+
+        let grid = parse_grid_items(&items);
+
+        assert_eq!(grid.items.len(), 1);
+        assert_eq!(grid.next_continuation, None);
+    }
+
+    #[test]
+    fn parse_grid_items_defaults_missing_title_and_thumbnail() {
+        let item = serde_json::json!({
+            "richItemRenderer": {
+                "content": {
+                    "lockupViewModel": {
+                        "contentId": "abc123"
+                    }
+                }
+            }
+        });
+
+        let grid = parse_grid_items(&[item]);
+
+        assert_eq!(grid.items.len(), 1);
+        assert_eq!(grid.items[0].title, "");
+        assert_eq!(grid.items[0].thumbnail, "");
+    }
+
+    #[test]
+    fn parse_grid_items_skips_unrecognized_entries() {
+        let items = vec![serde_json::json!({"someOtherRenderer": {}})];
+
+        let grid = parse_grid_items(&items);
+
+        assert!(grid.items.is_empty());
+        assert_eq!(grid.next_continuation, None);
+    }
+
+    fn video_info(id: &str) -> VideoInfo {
+        VideoInfo {
+            id: id.into(),
+            url: make_youtube_video_url(id),
+            title: String::new(),
+            thumbnail: String::new(),
+        }
+    }
+
+    #[test]
+    fn collect_links_preserves_youtube_order() {
+        let mut crawler = YtUploadsCrawler::channel("some-channel");
+
+        crawler.collect_links(vec![
+            video_info("newest"),
+            video_info("middle"),
+            video_info("oldest"),
+        ]);
+
+        assert_eq!(crawler.links.pop().unwrap().id, "newest");
+        assert_eq!(crawler.links.pop().unwrap().id, "middle");
+        assert_eq!(crawler.links.pop().unwrap().id, "oldest");
+        assert!(crawler.links.is_empty());
+    }
+
+    #[test]
+    fn make_youtube_video_url_builds_watch_url() {
+        assert_eq!(
+            make_youtube_video_url("abc123"),
+            "https://www.youtube.com/watch?v=abc123"
+        );
+    }
+
+    #[test]
+    fn canonicalize_video_url_prefixes_relative_paths() {
+        assert_eq!(
+            canonicalize_video_url("/watch?v=abc123"),
+            "https://www.youtube.com/watch?v=abc123"
+        );
+    }
+
+    #[test]
+    fn canonicalize_video_url_leaves_absolute_urls_untouched() {
+        assert_eq!(
+            canonicalize_video_url("https://www.youtube.com/watch?v=abc123"),
+            "https://www.youtube.com/watch?v=abc123"
+        );
+    }
+}
