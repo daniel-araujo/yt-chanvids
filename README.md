@@ -3,7 +3,7 @@
 Generates a list of links to all public videos of a YouTube channel.
 
 ```
-$ yt-chanvids PewDiePie
+$ yt-chanvids list PewDiePie
 https://www.youtube.com/watch?v=0zYI8FjSF_k
 https://www.youtube.com/watch?v=X4dAPKYPhDQ
 https://www.youtube.com/watch?v=LZ0rGTsdfwk
@@ -38,10 +38,9 @@ yt-chanvids video [OPTIONS] [--] VIDEO-ID
 You can pass a username or a channel id. They can be found in the URL of a
 YouTube channel's page.
 
-The first two forms are equivalent and produce a line for each video that
-they can find. A line only contains a URL to the video. The `list` form is
-provided as an explicit alternative to the bare form, alongside `channel`
-and `video`.
+The bare form is a backwards-compatible alias for `list`. Both produce a
+line for each video that they can find. A line only contains a URL to the
+video.
 
 The `channel` subcommand prints a channel's title, thumbnail and description.
 The `video` subcommand prints a video's title, publish date, duration (in
@@ -67,7 +66,7 @@ You can get a list by either passing a channel id:
 
 ```
 # Passing a channel id.
-$ yt-chanvids UCR4s1DE9J4DHzZYXMltSMAg
+$ yt-chanvids list UCR4s1DE9J4DHzZYXMltSMAg
 https://www.youtube.com/watch?v=yAmGdn9t5Rs
 https://www.youtube.com/watch?v=_w6-iHbtn-Y
 https://www.youtube.com/watch?v=K1x2Nox-f1A
@@ -80,7 +79,7 @@ Or a username:
 
 ```
 # Passing a username.
-$ yt-chanvids HowToBasic
+$ yt-chanvids list HowToBasic
 https://www.youtube.com/watch?v=yAmGdn9t5Rs
 https://www.youtube.com/watch?v=_w6-iHbtn-Y
 https://www.youtube.com/watch?v=K1x2Nox-f1A
@@ -93,17 +92,17 @@ With redirection you're able to save the list to a file:
 
 ```
 # Saves list to a file.
-$ yt-chanvids Vsauce > to-watch.txt
+$ yt-chanvids list Vsauce > to-watch.txt
 
 # Appends more links to the existing file.
-$ yt-chanvids Vsauce2 >> to-watch.txt
+$ yt-chanvids list Vsauce2 >> to-watch.txt
 ```
 
 Pipe the list to another command:
 
 ```
 # Counts the number of public videos of a channel.
-$ yt-chanvids PewDiePie | wc -l
+$ yt-chanvids list PewDiePie | wc -l
 2929
 ```
 
@@ -111,21 +110,10 @@ And even perform complex operations:
 
 ```
 # Shortens urls.
-$ yt-chanvids PewDiePie | sed "s/^https:\/\/www\.youtube\.com\/watch?v=/https:\/\/youtu.be\//"
+$ yt-chanvids list PewDiePie | sed "s/^https:\/\/www\.youtube\.com\/watch?v=/https:\/\/youtu.be\//"
 https://youtu.be/0zYI8FjSF_k
 https://youtu.be/X4dAPKYPhDQ
 https://youtu.be/LZ0rGTsdfwk
-[...]
-```
-
-
-The `list` subcommand does the same thing, explicitly:
-
-```
-$ yt-chanvids list PewDiePie
-https://www.youtube.com/watch?v=0zYI8FjSF_k
-https://www.youtube.com/watch?v=X4dAPKYPhDQ
-https://www.youtube.com/watch?v=LZ0rGTsdfwk
 [...]
 ```
 
