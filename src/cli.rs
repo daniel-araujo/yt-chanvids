@@ -48,10 +48,10 @@ fn main() {
     let json = matches.opt_present("json");
 
     match matches.free.as_slice() {
-        [channel] => list_links(channel, false),
-        [subcommand, id] if subcommand == "list" => list_links(id, json),
-        [subcommand, id] if subcommand == "channel" => show_channel(id, json),
-        [subcommand, id] if subcommand == "video" => show_video(id, json),
+        [channel] => list_links(&parse_channel_arg(channel), false),
+        [subcommand, id] if subcommand == "list" => list_links(&parse_channel_arg(id), json),
+        [subcommand, id] if subcommand == "channel" => show_channel(&parse_channel_arg(id), json),
+        [subcommand, id] if subcommand == "video" => show_video(&parse_video_arg(id), json),
         [] => {
             print_usage_mistake("Channel id or username not provided.");
             exit(1);
@@ -156,6 +156,214 @@ fn show_video(id: &str, json: bool) {
     exit(0);
 }
 
+/// Extracts a channel id, handle or username out of a pasted YouTube
+/// channel URL. Anything that isn't a recognized YouTube URL (including a
+/// bare id, handle or username) is returned unchanged.
+fn parse_channel_arg(input: &str) -> String {
+    let url = match url::Url::parse(input) {
+        Ok(url) => url,
+        Err(_) => return input.to_string(),
+    };
+
+    if !is_youtube_host(&url) {
+        return input.to_string();
+    }
+
+    match path_segments(&url).as_slice() {
+        ["channel", id, ..] => id.to_string(),
+        ["c", name, ..] => name.to_string(),
+        ["user", name, ..] => name.to_string(),
+        [first, ..] => first.to_string(),
+        [] => input.to_string(),
+    }
+}
+
+/// Extracts a video id out of a pasted YouTube video URL (a `watch` link,
+/// a `youtu.be` short link, or a `shorts`/`embed`/`live` link). Anything
+/// that isn't one of those is returned unchanged, which includes a bare
+/// video id.
+fn parse_video_arg(input: &str) -> String {
+    let url = match url::Url::parse(input) {
+        Ok(url) => url,
+        Err(_) => return input.to_string(),
+    };
+
+    if url.host_str() == Some("youtu.be") {
+        if let Some(id) = path_segments(&url).first() {
+            return id.to_string();
+        }
+        return input.to_string();
+    }
+
+    if !is_youtube_host(&url) {
+        return input.to_string();
+    }
+
+    if let Some((_, id)) = url.query_pairs().find(|(key, _)| key == "v") {
+        return id.into_owned();
+    }
+
+    match path_segments(&url).as_slice() {
+        ["shorts", id, ..] => id.to_string(),
+        ["embed", id, ..] => id.to_string(),
+        ["live", id, ..] => id.to_string(),
+        _ => input.to_string(),
+    }
+}
+
+fn is_youtube_host(url: &url::Url) -> bool {
+    match url.host_str() {
+        Some(host) => host == "youtube.com" || host.ends_with(".youtube.com"),
+        None => false,
+    }
+}
+
+fn path_segments(url: &url::Url) -> Vec<&str> {
+    url.path_segments()
+        .map(|segments| segments.filter(|segment| !segment.is_empty()).collect())
+        .unwrap_or_default()
+}
+
 fn print_error(message: &str) {
     write!(&mut std::io::stderr(), "{}\n", message).unwrap();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_channel_arg_leaves_bare_id_untouched() {
+        assert_eq!(parse_channel_arg("UC-lHJZR3Gqxm24_Vd_AJ5Yw"), "UC-lHJZR3Gqxm24_Vd_AJ5Yw");
+    }
+
+    #[test]
+    fn parse_channel_arg_leaves_bare_handle_untouched() {
+        assert_eq!(parse_channel_arg("@PewDiePie"), "@PewDiePie");
+    }
+
+    #[test]
+    fn parse_channel_arg_extracts_from_channel_url() {
+        assert_eq!(
+            parse_channel_arg("https://www.youtube.com/channel/UC-lHJZR3Gqxm24_Vd_AJ5Yw"),
+            "UC-lHJZR3Gqxm24_Vd_AJ5Yw"
+        );
+    }
+
+    #[test]
+    fn parse_channel_arg_extracts_from_channel_url_with_tab() {
+        assert_eq!(
+            parse_channel_arg("https://www.youtube.com/channel/UC-lHJZR3Gqxm24_Vd_AJ5Yw/videos"),
+            "UC-lHJZR3Gqxm24_Vd_AJ5Yw"
+        );
+    }
+
+    #[test]
+    fn parse_channel_arg_extracts_from_handle_url() {
+        assert_eq!(
+            parse_channel_arg("https://www.youtube.com/@PewDiePie/videos"),
+            "@PewDiePie"
+        );
+    }
+
+    #[test]
+    fn parse_channel_arg_extracts_from_legacy_user_url() {
+        assert_eq!(
+            parse_channel_arg("https://www.youtube.com/user/pewdiepie"),
+            "pewdiepie"
+        );
+    }
+
+    #[test]
+    fn parse_channel_arg_extracts_from_legacy_custom_url() {
+        assert_eq!(
+            parse_channel_arg("https://www.youtube.com/c/PewDiePie"),
+            "PewDiePie"
+        );
+    }
+
+    #[test]
+    fn parse_channel_arg_extracts_from_bare_custom_url() {
+        assert_eq!(
+            parse_channel_arg("https://www.youtube.com/pewdiepie"),
+            "pewdiepie"
+        );
+    }
+
+    #[test]
+    fn parse_channel_arg_ignores_non_youtube_url() {
+        assert_eq!(
+            parse_channel_arg("https://example.com/channel/UC-lHJZR3Gqxm24_Vd_AJ5Yw"),
+            "https://example.com/channel/UC-lHJZR3Gqxm24_Vd_AJ5Yw"
+        );
+    }
+
+    #[test]
+    fn parse_video_arg_leaves_bare_id_untouched() {
+        assert_eq!(parse_video_arg("cNYSOHWbkJU"), "cNYSOHWbkJU");
+    }
+
+    #[test]
+    fn parse_video_arg_extracts_from_watch_url() {
+        assert_eq!(
+            parse_video_arg("https://www.youtube.com/watch?v=cNYSOHWbkJU"),
+            "cNYSOHWbkJU"
+        );
+    }
+
+    #[test]
+    fn parse_video_arg_extracts_from_watch_url_with_extra_params() {
+        assert_eq!(
+            parse_video_arg("https://www.youtube.com/watch?v=cNYSOHWbkJU&t=42s&list=PL123"),
+            "cNYSOHWbkJU"
+        );
+    }
+
+    #[test]
+    fn parse_video_arg_extracts_from_short_url() {
+        assert_eq!(
+            parse_video_arg("https://youtu.be/cNYSOHWbkJU"),
+            "cNYSOHWbkJU"
+        );
+    }
+
+    #[test]
+    fn parse_video_arg_extracts_from_short_url_with_query() {
+        assert_eq!(
+            parse_video_arg("https://youtu.be/cNYSOHWbkJU?si=abc123"),
+            "cNYSOHWbkJU"
+        );
+    }
+
+    #[test]
+    fn parse_video_arg_extracts_from_shorts_url() {
+        assert_eq!(
+            parse_video_arg("https://www.youtube.com/shorts/cNYSOHWbkJU"),
+            "cNYSOHWbkJU"
+        );
+    }
+
+    #[test]
+    fn parse_video_arg_extracts_from_embed_url() {
+        assert_eq!(
+            parse_video_arg("https://www.youtube.com/embed/cNYSOHWbkJU"),
+            "cNYSOHWbkJU"
+        );
+    }
+
+    #[test]
+    fn parse_video_arg_ignores_non_youtube_url() {
+        assert_eq!(
+            parse_video_arg("https://example.com/watch?v=cNYSOHWbkJU"),
+            "https://example.com/watch?v=cNYSOHWbkJU"
+        );
+    }
+
+    #[test]
+    fn parse_video_arg_falls_back_when_no_v_param() {
+        assert_eq!(
+            parse_video_arg("https://www.youtube.com/watch?list=PL123"),
+            "https://www.youtube.com/watch?list=PL123"
+        );
+    }
 }

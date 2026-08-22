@@ -702,6 +702,7 @@ dependencies = [
  "getopts",
  "serde",
  "serde_json",
+ "url",
  "urlencoding",
 ]
 

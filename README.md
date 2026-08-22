@@ -35,8 +35,10 @@ yt-chanvids channel [OPTIONS] [--] CHANNEL-ID|USERNAME
 yt-chanvids video [OPTIONS] [--] VIDEO-ID
 ```
 
-You can pass a username or a channel id. They can be found in the URL of a
-YouTube channel's page.
+You can pass a username or a channel id, or paste a channel URL directly
+(a `/channel/...`, `/c/...`, `/user/...` or `/@handle` link) and the id or
+handle will be extracted from it. `VIDEO-ID` similarly accepts a pasted
+video URL (a `watch`, `youtu.be`, `shorts`, `embed` or `live` link).
 
 The bare form is a backwards-compatible alias for `list`. Both produce a
 line for each video that they can find. A line only contains a URL to the
@@ -131,6 +133,16 @@ Or a video:
 
 ```
 $ yt-chanvids video jNQXAC9IVRw
+Title: Me at the zoo
+Published: 2005-04-23T20:31:52-07:00
+Duration: 19s
+Description: [...]
+```
+
+You can also paste a full URL instead of an id or username:
+
+```
+$ yt-chanvids video https://youtu.be/jNQXAC9IVRw
 Title: Me at the zoo
 Published: 2005-04-23T20:31:52-07:00
 Duration: 19s
