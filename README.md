@@ -15,6 +15,8 @@ https://www.youtube.com/watch?v=LZ0rGTsdfwk
 
 ## Installation
 
+### Crates.io
+
 This program is published on Crates.io so you can easily get it by running cargo
 install, like so:
 
@@ -26,6 +28,14 @@ All binaries installed with cargo install are stored in the installation root’
 bin folder. If you installed Rust using rustup.rs and don’t have any custom
 configurations, this directory will be $HOME/.cargo/bin. Ensure that directory
 is in your $PATH to be able to run programs you’ve installed with cargo install.
+
+### Arch Linux
+
+You can find it in the AUR
+
+```
+https://aur.archlinux.org/packages/yt-chanvids/
+```
 
 
 ## Usage
