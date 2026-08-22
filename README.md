@@ -47,12 +47,12 @@ The `channel` subcommand prints a channel's title, thumbnail and description.
 The `video` subcommand prints a video's title, publish date, duration (in
 seconds) and description.
 
+Passing `--json` to the `list`, `channel` or `video` subcommands prints
+their output as JSON instead of plain text.
+
 The exit code will be 0 if the program does not encounter any problems. Any
 other value indicates a problem and you will most likely find an error message
 in the standard error stream.
-
-The only option available at the moment is the help option (`-h`, `--help`)
-which makes the program do nothing but print usage instructions.
 
 The `--` sequence is useful for preventing channel ids and usernames to be
 interpreted as options if they begin with dashes.
@@ -147,6 +147,17 @@ Title: Me at the zoo
 Published: 2005-04-23T20:31:52-07:00
 Duration: 19s
 Description: [...]
+```
+
+Add `--json` to `list`, `channel` or `video` for JSON output instead:
+
+```
+$ yt-chanvids channel --json PewDiePie
+{
+  "description": "I make videos.",
+  "thumbnail": "https://yt3.googleusercontent.com/[...]",
+  "title": "PewDiePie"
+}
 ```
 
 

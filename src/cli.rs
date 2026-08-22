@@ -15,6 +15,11 @@ fn main() {
 
     let mut opts = Options::new();
     opts.optflag("h", "help", "Print this help menu.");
+    opts.optflag(
+        "",
+        "json",
+        "Print output as JSON (list, channel and video subcommands only).",
+    );
 
     let matches = match opts.parse(&args[1..]) {
         Ok(m) => m,
@@ -40,11 +45,13 @@ fn main() {
         exit(0);
     }
 
+    let json = matches.opt_present("json");
+
     match matches.free.as_slice() {
-        [channel] => list_links(channel),
-        [subcommand, id] if subcommand == "list" => list_links(id),
-        [subcommand, id] if subcommand == "channel" => show_channel(id),
-        [subcommand, id] if subcommand == "video" => show_video(id),
+        [channel] => list_links(channel, false),
+        [subcommand, id] if subcommand == "list" => list_links(id, json),
+        [subcommand, id] if subcommand == "channel" => show_channel(id, json),
+        [subcommand, id] if subcommand == "video" => show_video(id, json),
         [] => {
             print_usage_mistake("Channel id or username not provided.");
             exit(1);
@@ -56,11 +63,26 @@ fn main() {
     }
 }
 
-fn list_links(channel: &str) {
+fn list_links(channel: &str, json: bool) {
     let mut crawler = YtUploadsCrawler::channel(channel);
 
-    while let Some(link) = crawler.next() {
-        println!("{}", link.url);
+    if json {
+        let mut videos = Vec::new();
+
+        while let Some(link) = crawler.next() {
+            videos.push(serde_json::json!({
+                "id": link.id,
+                "url": link.url,
+                "title": link.title,
+                "thumbnail": link.thumbnail,
+            }));
+        }
+
+        println!("{}", serde_json::to_string_pretty(&videos).unwrap());
+    } else {
+        while let Some(link) = crawler.next() {
+            println!("{}", link.url);
+        }
     }
 
     if let &Some(ref error) = crawler.error() {
@@ -87,20 +109,29 @@ fn list_links(channel: &str) {
     exit(0);
 }
 
-fn show_channel(id: &str) {
+fn show_channel(id: &str, json: bool) {
     let ChannelDetail {
         title,
         description,
         author_thumbnail,
     } = YtChannelDetailScraper::from_id(id).get();
 
-    println!("Title: {}", title);
-    println!("Thumbnail: {}", author_thumbnail);
-    println!("Description: {}", description);
+    if json {
+        let value = serde_json::json!({
+            "title": title,
+            "thumbnail": author_thumbnail,
+            "description": description,
+        });
+        println!("{}", serde_json::to_string_pretty(&value).unwrap());
+    } else {
+        println!("Title: {}", title);
+        println!("Thumbnail: {}", author_thumbnail);
+        println!("Description: {}", description);
+    }
     exit(0);
 }
 
-fn show_video(id: &str) {
+fn show_video(id: &str, json: bool) {
     let VideoDetail {
         title,
         description,
@@ -108,10 +139,20 @@ fn show_video(id: &str) {
         publish_date,
     } = YtVideoDetailScraper::from_id(id).get();
 
-    println!("Title: {}", title);
-    println!("Published: {}", publish_date);
-    println!("Duration: {}s", duration_seconds);
-    println!("Description: {}", description);
+    if json {
+        let value = serde_json::json!({
+            "title": title,
+            "published": publish_date,
+            "duration_seconds": duration_seconds,
+            "description": description,
+        });
+        println!("{}", serde_json::to_string_pretty(&value).unwrap());
+    } else {
+        println!("Title: {}", title);
+        println!("Published: {}", publish_date);
+        println!("Duration: {}s", duration_seconds);
+        println!("Description: {}", description);
+    }
     exit(0);
 }
 
