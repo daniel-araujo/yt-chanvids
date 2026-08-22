@@ -19,6 +19,8 @@ dependencies = [
  "http",
  "log",
  "native-tls",
+ "serde",
+ "serde_json",
  "url",
 ]
 
