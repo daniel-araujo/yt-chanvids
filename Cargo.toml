@@ -1,7 +1,7 @@
 [package]
 name = "yt-chanvids"
 description = "Lists a YouTube channel's videos or looks up channel/video details."
-version = "1.3.0"
+version = "1.4.0"
 authors = ["Daniel Araujo <contact@daniel-araujo.pt>"]
 repository = "https://github.com/daniel-araujo/yt-chanvids.git"
 license = "GPL-3.0-or-later"
