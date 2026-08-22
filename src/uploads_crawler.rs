@@ -1,4 +1,5 @@
 use crate::errors::{FetchLinksError, ParseJsonDataError, RequestError};
+use crate::youtube_page::{extract_balanced_json, extract_quoted_value, fetch_channel_html, CONSENT_COOKIE};
 
 pub struct VideoInfo {
     pub id: String,
@@ -6,11 +7,6 @@ pub struct VideoInfo {
     pub title: String,
     pub thumbnail: String,
 }
-
-/// A cookie that skips YouTube's cookie consent interstitial, which would
-/// otherwise redirect requests from EU-region IPs to consent.youtube.com
-/// instead of returning the channel page.
-const CONSENT_COOKIE: &str = "CONSENT=YES+1; SOCS=CAI";
 
 pub struct YtUploadsCrawler {
     channel: String,
@@ -131,18 +127,8 @@ impl YtUploadsCrawler {
      * Returns YouTube's response for the uploads page.
      */
     fn uploads_page_data(&mut self) -> Result<PageData, RequestError> {
-        let candidates: [fn(&str) -> Result<PageData, RequestError>; 2] =
-            [request_channel_uploads, request_user_uploads];
-
-        for worker in candidates.iter() {
-            match worker(&self.channel) {
-                Ok(page) => return Ok(page),
-                Err(RequestError::NotFound) => continue,
-                Err(error) => return Err(error),
-            }
-        }
-
-        Err(RequestError::NotFound)
+        let html = fetch_channel_html(&self.channel, "/videos")?;
+        parse_uploads_page(&html)
     }
 
     fn uploads_continuation_data(&mut self) -> Result<serde_json::Value, RequestError> {
@@ -228,47 +214,26 @@ fn parse_grid_items(items: &[serde_json::Value]) -> GridPage {
     }
 }
 
-fn request_channel_uploads(channel: &str) -> Result<PageData, RequestError> {
-    let url = format!("https://www.youtube.com/channel/{}/videos", channel);
-    fetch_channel_videos_page(&url)
-}
-
-fn request_user_uploads(user: &str) -> Result<PageData, RequestError> {
-    let url = format!(
-        "https://www.youtube.com/{}/videos",
-        user.trim_start_matches('@')
-    );
-    fetch_channel_videos_page(&url)
-}
-
-/// Fetches a channel's "Videos" tab page and extracts the embedded
-/// `ytInitialData`, along with the InnerTube API key and client version
-/// used to fetch further pages of results.
-fn fetch_channel_videos_page(url: &str) -> Result<PageData, RequestError> {
-    let response = attohttpc::get(url).header("cookie", CONSENT_COOKIE).send()?;
-
-    if !response.is_success() {
-        return Err(RequestError::NotFound);
-    }
-
-    let html = response.text()?;
-
-    let data = match extract_balanced_json(&html, "var ytInitialData = ") {
+/// Extracts the embedded `ytInitialData` from a channel's "Videos" tab page,
+/// along with the InnerTube API key and client version used to fetch
+/// further pages of results.
+fn parse_uploads_page(html: &str) -> Result<PageData, RequestError> {
+    let data = match extract_balanced_json(html, "var ytInitialData = ") {
         Some(json_src) => {
             serde_json::from_str(json_src).map_err(|err| ParseJsonDataError::from(err))?
         }
-        None => return Err(ParseJsonDataError::Html(html).into()),
+        None => return Err(ParseJsonDataError::Html(html.to_string()).into()),
     };
 
-    let api_key = match extract_quoted_value(&html, "\"INNERTUBE_API_KEY\":\"") {
+    let api_key = match extract_quoted_value(html, "\"INNERTUBE_API_KEY\":\"") {
         Some(key) => key,
-        None => return Err(ParseJsonDataError::Html(html).into()),
+        None => return Err(ParseJsonDataError::Html(html.to_string()).into()),
     };
 
-    let client_version = match extract_quoted_value(&html, "\"INNERTUBE_CONTEXT_CLIENT_VERSION\":\"")
+    let client_version = match extract_quoted_value(html, "\"INNERTUBE_CONTEXT_CLIENT_VERSION\":\"")
     {
         Some(version) => version,
-        None => return Err(ParseJsonDataError::Html(html).into()),
+        None => return Err(ParseJsonDataError::Html(html.to_string()).into()),
     };
 
     Ok(PageData {
@@ -301,55 +266,6 @@ fn request_browse(
         .send()
 }
 
-/// Finds `marker` in `html` and returns the JSON object that immediately
-/// follows it, by counting braces (while skipping over quoted strings) until
-/// the one that closes the object starting the search is found. Used to pull
-/// `var ytInitialData = {...};` out of a page without a full JS parser.
-fn extract_balanced_json<'a>(html: &'a str, marker: &str) -> Option<&'a str> {
-    let after_marker = &html[html.find(marker)? + marker.len()..];
-    let brace_start = after_marker.find('{')?;
-    let bytes = after_marker.as_bytes();
-
-    let mut depth = 0u32;
-    let mut in_string = false;
-    let mut escaped = false;
-
-    for (i, &b) in bytes.iter().enumerate().skip(brace_start) {
-        if in_string {
-            if escaped {
-                escaped = false;
-            } else if b == b'\\' {
-                escaped = true;
-            } else if b == b'"' {
-                in_string = false;
-            }
-            continue;
-        }
-
-        match b {
-            b'"' => in_string = true,
-            b'{' => depth += 1,
-            b'}' => {
-                depth -= 1;
-                if depth == 0 {
-                    return Some(&after_marker[brace_start..=i]);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    None
-}
-
-/// Finds `marker` (expected to end right before an opening quote, e.g.
-/// `"someKey":"`) and returns the following string value.
-fn extract_quoted_value(html: &str, marker: &str) -> Option<String> {
-    let after = &html[html.find(marker)? + marker.len()..];
-    let end = after.find('"')?;
-    Some(after[..end].to_string())
-}
-
 fn make_youtube_video_url(id: &str) -> String {
     String::from("https://www.youtube.com/watch?v=") + id
 }
@@ -368,46 +284,30 @@ mod tests {
     use super::*;
 
     #[test]
-    fn extract_balanced_json_finds_object_after_marker() {
-        let html = r#"<script>var ytInitialData = {"a":1,"b":{"c":"}not a brace{"}};</script>"#;
+    fn parse_uploads_page_extracts_data_and_credentials() {
+        let html = concat!(
+            r#"<script>var ytInitialData = {"contents":{"twoColumnBrowseResultsRenderer":"#,
+            r#"{"tabs":[{"tabRenderer":{"selected":true,"content":{"richGridRenderer":"#,
+            r#"{"contents":[]}}}}]}}};</script>"#,
+            r#"<script>"INNERTUBE_API_KEY":"AIzaTest123","#,
+            r#""INNERTUBE_CONTEXT_CLIENT_VERSION":"2.20260101.00.00"</script>"#,
+        );
 
-        let json = extract_balanced_json(html, "var ytInitialData = ").unwrap();
-        let parsed: serde_json::Value = serde_json::from_str(json).unwrap();
+        let page = parse_uploads_page(html).unwrap();
 
-        assert_eq!(parsed["a"], 1);
-        assert_eq!(parsed["b"]["c"], "}not a brace{");
+        assert_eq!(page.api_key, "AIzaTest123");
+        assert_eq!(page.client_version, "2.20260101.00.00");
+        assert!(find_videos_tab_content(&page.data).is_some());
     }
 
     #[test]
-    fn extract_balanced_json_stops_at_matching_brace() {
-        let html = r#"var ytInitialData = {"x":1}; var somethingElse = {"y":2};"#;
+    fn parse_uploads_page_errors_when_ytinitialdata_missing() {
+        let html = "<html>not a channel page</html>";
 
-        let json = extract_balanced_json(html, "var ytInitialData = ").unwrap();
-
-        assert_eq!(json, r#"{"x":1}"#);
-    }
-
-    #[test]
-    fn extract_balanced_json_missing_marker_returns_none() {
-        let html = "<script>nothing here</script>";
-
-        assert!(extract_balanced_json(html, "var ytInitialData = ").is_none());
-    }
-
-    #[test]
-    fn extract_quoted_value_finds_value() {
-        let html = r#"blah,"INNERTUBE_API_KEY":"AIzaTest123","other":true"#;
-
-        let value = extract_quoted_value(html, "\"INNERTUBE_API_KEY\":\"").unwrap();
-
-        assert_eq!(value, "AIzaTest123");
-    }
-
-    #[test]
-    fn extract_quoted_value_missing_marker_returns_none() {
-        let html = "no key here";
-
-        assert!(extract_quoted_value(html, "\"INNERTUBE_API_KEY\":\"").is_none());
+        assert!(matches!(
+            parse_uploads_page(html),
+            Err(RequestError::ParseJsonDataError(ParseJsonDataError::Html(_)))
+        ));
     }
 
     #[test]
